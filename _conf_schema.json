@@ -1,0 +1,65 @@
+{
+  "index_path": {
+    "description": "表情包标签索引文件路径",
+    "type": "string",
+    "hint": "image_index.json 的绝对路径（Docker 内为 /AstrBot/data/... 开头）",
+    "obvious_hint": true,
+    "default": "/AstrBot/data/plugin_data/astrbot_plugin_smart_imagechat_hub/image_index.json"
+  },
+  "data_root": {
+    "description": "表情包数据根目录",
+    "type": "string",
+    "hint": "用于拼接 rel_path 得到图片绝对路径",
+    "default": "/AstrBot/data/plugin_data/astrbot_plugin_smart_imagechat_hub/"
+  },
+  "max_match_candidates": {
+    "description": "关键词匹配候选上限",
+    "type": "int",
+    "hint": "最多返回多少张候选图片供选择",
+    "default": 10
+  },
+  "min_tag_score": {
+    "description": "最低匹配分数阈值",
+    "type": "float",
+    "hint": "低于此分数的候选不被考虑，0表示不限制",
+    "default": 0.0
+  },
+  "auto_refresh": {
+    "description": "启动时自动加载索引",
+    "type": "bool",
+    "hint": "是否在插件启动时自动加载 image_index.json",
+    "default": true
+  },
+  "tag_synonyms": {
+    "description": "标签同义词映射",
+    "type": "object",
+    "hint": "格式: {\"哈哈\":\"大笑\",\"猫猫\":\"猫\"}，用于扩展搜索匹配",
+    "default": {},
+    "items": {}
+  },
+  "match_mode": {
+    "description": "表情包匹配模式",
+    "type": "string",
+    "hint": "keyword: 关键词匹配(默认); embedding: 向量语义匹配; hybrid: 关键词粗筛+向量精排",
+    "options": ["keyword", "embedding", "hybrid"],
+    "default": "keyword"
+  },
+  "embedding_provider_id": {
+    "description": "向量匹配使用的 Embedding Provider ID",
+    "type": "string",
+    "hint": "留空则自动选择第一个可用的 embedding provider",
+    "default": ""
+  },
+  "embedding_fallback": {
+    "description": "向量匹配失败时回退到关键词匹配",
+    "type": "bool",
+    "hint": "当 embedding provider 不可用或出错时自动降级",
+    "default": true
+  },
+  "thumbnail_size": {
+    "description": "WebUI 缩略图边长(px)",
+    "type": "int",
+    "hint": "缩略图最大边长",
+    "default": 200
+  }
+}
