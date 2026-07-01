@@ -61,5 +61,17 @@
     "type": "int",
     "hint": "缩略图最大边长",
     "default": 200
+  },
+  "inject_prompt_enabled": {
+    "description": "启用提示词注入",
+    "type": "bool",
+    "hint": "在每次 LLM 请求时注入提示词，提醒 LLM 使用 send_meme 发表情包",
+    "default": false
+  },
+  "inject_prompt": {
+    "description": "注入的提示词内容",
+    "type": "string",
+    "hint": "每次 LLM 请求时追加到 system_prompt 的提示词。含 {tag_list} 时会分离为静态 system_prompt + 动态 extra_user_content_parts，避免破坏提示词缓存",
+    "default": "\n\n【表情包使用规则】\n你有一个 send_meme 工具可以使用。当回复用户时，如果对话场景适合发送表情包，建议主动调用 send_meme。\n- 用户表达情绪时、气氛需要活跃时、回复可能偏冷淡时，都可以考虑发送表情包。\n- send_meme 需要 tags（情绪标签词）和可选的 scene（场景描述）。\n- 当前库中部分可用标签包括: {tag_list}\n- 注意不要过度使用，一轮对话一般发 1 张就够。"
   }
 }

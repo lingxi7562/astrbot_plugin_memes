@@ -1,14 +1,18 @@
 import base64
 import io
+from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.message_components import Image
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 from astrbot.api.web import json_response, request
+from astrbot.core.agent.message import TextPart
 
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex
 from .backend.matcher import TagMatcher
-from .backend.tool import SendMemeTool
 
 PLUGIN_NAME = "astrbot_plugin_memes"
 
@@ -68,19 +72,94 @@ class MemesPlugin(Star):
                 )
                 match_mode = "keyword"
 
-        max_candidates = config.get("max_match_candidates", 10)
-        min_score = config.get("min_tag_score", 0.0)
-        SendMemeTool.configure(
-            self.matcher,
-            self.index,
-            max_candidates,
-            min_score,
-            match_mode=match_mode,
-            embedding_fallback=config.get("embedding_fallback", True),
-        )
-        self.context.add_llm_tools(SendMemeTool())
+        self._match_mode = match_mode
+        self._max_candidates = config.get("max_match_candidates", 10)
+        self._min_score = config.get("min_tag_score", 0.0)
+        self._embedding_fallback = config.get("embedding_fallback", True)
 
         self._register_web_apis()
+
+    @filter.llm_tool(name="send_meme")
+    async def send_meme_tool(
+        self, event: AstrMessageEvent, tags: list[str], scene: str = ""
+    ) -> MessageEventResult:
+        '''当需要表达情绪或活跃气氛时调用，从表情包库中挑选并发送一张表情包图片。
+
+        Args:
+            tags(array[string]): 表情包标签，描述想传递的情绪。例如 ["开心","祝贺","比心"]，["无语","冷笑"]
+            scene(string): 可选场景描述，例如 "对方在撒娇"、"刚讲了个冷笑话"
+        '''
+        if scene:
+            tags.append(scene)
+        if not tags:
+            yield event.plain_result("请提供至少一个表情包标签。")
+            return
+
+        limit = self._max_candidates
+        min_score = self._min_score
+
+        matches: list = []
+        if self._match_mode == "embedding":
+            matches = await self.matcher.match_embedding(tags, limit=limit)
+            if not matches and self._embedding_fallback:
+                matches = self.matcher.match(tags, limit=limit, min_score=min_score)
+        elif self._match_mode == "hybrid":
+            matches = await self.matcher.match_hybrid(tags, limit=limit, min_score=min_score)
+            if not matches and self._embedding_fallback:
+                matches = self.matcher.match(tags, limit=limit, min_score=min_score)
+        else:
+            matches = self.matcher.match(tags, limit=limit, min_score=min_score)
+
+        if not matches:
+            available = self.index.get_unique_tags()[:50]
+            yield event.plain_result(
+                f"未找到匹配的表情包。传入标签: {', '.join(tags)}，"
+                f"库中部分可用标签: {', '.join(available)}"
+            )
+            return
+
+        best = matches[0]
+        img_path = Path(best["path"])
+        if not img_path.is_file():
+            found = False
+            for candidate in matches[1:]:
+                alt = Path(candidate["path"])
+                if alt.is_file():
+                    best = candidate
+                    img_path = alt
+                    found = True
+                    break
+            if not found:
+                yield event.plain_result(f"表情包文件不存在: {best['filename']}")
+                return
+
+        try:
+            yield event.chain_result([Image.fromFileSystem(str(img_path))])
+            logger.info(
+                f"[{PLUGIN_NAME}] 发送表情包: {best['filename']} "
+                f"(标签: {', '.join(best['matched_tags'])})"
+            )
+        except Exception as e:
+            logger.error(f"[{PLUGIN_NAME}] 发送表情包失败: {e}")
+            yield event.plain_result(f"发送表情包时出错: {e}")
+
+    @filter.on_llm_request()
+    async def inject_meme_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
+        if not self.config.get("inject_prompt_enabled", False):
+            return
+        prompt = self.config.get("inject_prompt", "")
+        if not prompt or not isinstance(prompt, str):
+            return
+
+        if "{tag_list}" in prompt:
+            static_prompt = prompt.replace("{tag_list}", "")
+            req.system_prompt += static_prompt
+            tag_list = ", ".join(self.index.get_unique_tags()[:80])
+            req.extra_user_content_parts.append(
+                TextPart(text=f"\n<memes_available_tags>\n{tag_list}\n</memes_available_tags>")
+            )
+        else:
+            req.system_prompt += prompt
 
     def _register_web_apis(self) -> None:
         ctx = self.context
@@ -116,16 +195,33 @@ class MemesPlugin(Star):
         )
 
     async def _api_list(self):
-        try:
-            self.index.load()
-            global _THUMB_CACHE
-            _THUMB_CACHE = {}
-        except Exception:
-            pass
+        page = int(request.query.get("page", 1))
+        page_size = int(request.query.get("page_size", 30))
+        search = (request.query.get("search", "") or "").strip()
+
+        all_ids = sorted(self.index.images.keys())
+
+        if search:
+            search_lower = search.lower()
+            all_ids = [
+                iid
+                for iid in all_ids
+                if search_lower in (self.index.images[iid].get("filename", "") or "").lower()
+                or any(
+                    search_lower in t.lower()
+                    for t in self.index.images[iid].get("tags", [])
+                )
+            ]
+
+        total = len(all_ids)
+        start = (page - 1) * page_size
+        end = min(start + page_size, total)
+        page_ids = all_ids[start:end]
 
         items = []
         thumb_size = self.config.get("thumbnail_size", 200)
-        for img_id, item in self.index.images.items():
+        for img_id in page_ids:
+            item = self.index.images[img_id]
             thumb_b64 = self._get_thumbnail_b64(item, thumb_size)
             items.append(
                 {
@@ -135,7 +231,16 @@ class MemesPlugin(Star):
                     "thumb_b64": thumb_b64,
                 }
             )
-        return json_response(items)
+
+        return json_response(
+            {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "has_more": end < total,
+            }
+        )
 
     async def _api_refresh(self):
         try:
@@ -172,19 +277,22 @@ class MemesPlugin(Star):
             "min_tag_score": self.config.get("min_tag_score", 0.0),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
+            "inject_prompt_enabled": self.config.get("inject_prompt_enabled", False),
+            "inject_prompt": self.config.get("inject_prompt", ""),
             "embedder_status": "on" if self.embedder is not None else "off",
             "available_embedding_providers": emb_providers,
         })
 
     async def _api_set_config(self):
         try:
-            body = request.get_json()
+            body = await request.json()
         except Exception:
             return json_response({"status": "error", "message": "请求体解析失败"})
 
         allowed_keys = {
             "match_mode", "embedding_provider_id", "embedding_fallback",
             "max_match_candidates", "min_tag_score", "auto_refresh", "thumbnail_size",
+            "inject_prompt_enabled", "inject_prompt",
         }
         changed = False
         for k, v in body.items():

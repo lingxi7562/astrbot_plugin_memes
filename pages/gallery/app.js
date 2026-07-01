@@ -1,12 +1,18 @@
 const bridge = window.AstrBotPluginPage;
+const PAGE_SIZE = 30;
 
-let allMemes = [];
-let filtered = [];
+let currentPage = 1;
+let totalCount = 0;
+let hasMore = false;
+let currentSearch = "";
+let isLoading = false;
 let currentConfig = {};
+let loadObserver = null;
 
 const gallery = document.getElementById("gallery");
 const empty = document.getElementById("empty");
 const loading = document.getElementById("loading");
+const loadSentinel = document.getElementById("load-sentinel");
 const stats = document.getElementById("stats");
 const filterInput = document.getElementById("filter-input");
 const refreshBtn = document.getElementById("refresh-btn");
@@ -24,6 +30,7 @@ function showLoading() {
   loading.style.display = "flex";
   gallery.style.display = "none";
   empty.style.display = "none";
+  loadSentinel.style.display = "none";
 }
 
 function hideLoading() {
@@ -35,16 +42,44 @@ function updateStats(text) {
   stats.textContent = text;
 }
 
-async function load() {
+function showSentinel(show) {
+  loadSentinel.style.display = show ? "flex" : "none";
+}
+
+function sentinelText(text) {
+  const span = loadSentinel.querySelector("span");
+  if (span) span.textContent = text;
+}
+
+async function loadFirst() {
+  currentPage = 1;
+  currentSearch = filterInput.value.trim();
+  gallery.innerHTML = "";
   showLoading();
   try {
-    allMemes = await bridge.apiGet("list");
-    filtered = [...allMemes];
-    render();
-    updateStats(`共 ${allMemes.length} 张`);
-    if (allMemes.length === 0) {
+    const params = { page: 1, page_size: PAGE_SIZE };
+    if (currentSearch) params.search = currentSearch;
+    const data = await bridge.apiGet("list", params);
+    totalCount = data.total;
+    hasMore = data.has_more;
+    currentPage = 1;
+    renderPage(data.items, true);
+    if (data.total === 0) {
       gallery.style.display = "none";
       empty.style.display = "flex";
+      empty.querySelector(".empty-text").textContent = currentSearch
+        ? "没有匹配的表情包"
+        : "表情包库为空";
+      empty.querySelector(".empty-hint").textContent = currentSearch
+        ? "试试其他关键词"
+        : "请检查索引文件配置";
+      showSentinel(false);
+    } else {
+      updateStats(
+        currentSearch
+          ? `搜索: ${currentSearch} · ${totalCount} 张`
+          : `共 ${totalCount} 张`
+      );
     }
   } catch (err) {
     updateStats("加载失败");
@@ -52,31 +87,50 @@ async function load() {
     empty.style.display = "flex";
     empty.querySelector(".empty-text").textContent = "加载失败";
     empty.querySelector(".empty-hint").textContent = err.message;
+    showSentinel(false);
     console.error(err);
   } finally {
     hideLoading();
   }
 }
 
-function render(list) {
-  list = list || filtered;
-  gallery.innerHTML = "";
+async function loadMore() {
+  if (isLoading || !hasMore) return;
+  isLoading = true;
+  sentinelText("加载中...");
+  const nextPage = currentPage + 1;
+  try {
+    const params = { page: nextPage, page_size: PAGE_SIZE };
+    if (currentSearch) params.search = currentSearch;
+    const data = await bridge.apiGet("list", params);
+    hasMore = data.has_more;
+    currentPage = data.page;
+    totalCount = data.total;
+    renderPage(data.items, false);
+  } catch (err) {
+    sentinelText("加载失败，下滑重试");
+    console.error(err);
+  } finally {
+    isLoading = false;
+  }
+}
 
-  if (list.length === 0) {
-    gallery.style.display = "none";
-    empty.style.display = "flex";
-    empty.querySelector(".empty-text").textContent = "没有匹配的表情包";
-    empty.querySelector(".empty-hint").textContent = "试试其他关键词";
+function renderPage(items, reset) {
+  if (reset) {
+    gallery.innerHTML = "";
+    empty.style.display = "none";
+    gallery.style.display = "grid";
+  }
+
+  if (items.length === 0) {
+    showSentinel(false);
     return;
   }
 
-  empty.style.display = "none";
-  gallery.style.display = "grid";
-
-  for (const meme of list) {
+  for (const meme of items) {
     const card = document.createElement("article");
     card.className = "card";
-    card.style.animationDelay = `${Math.min(gallery.children.length * 0.02, 0.4)}s`;
+    card.style.animationDelay = `${Math.min(gallery.children.length * 0.01, 0.3)}s`;
 
     const imgWrap = document.createElement("div");
     imgWrap.className = "img-wrap";
@@ -115,7 +169,7 @@ function render(list) {
       tagSpan.addEventListener("click", (e) => {
         e.stopPropagation();
         filterInput.value = tag;
-        applyFilter(tag);
+        loadFirst();
       });
       tagsDiv.appendChild(tagSpan);
     }
@@ -132,47 +186,46 @@ function render(list) {
     card.appendChild(info);
     gallery.appendChild(card);
   }
-}
 
-function applyFilter(query) {
-  const q = (query !== undefined ? query : filterInput.value)
-    .toLowerCase()
-    .trim();
-  if (!q) {
-    filtered = [...allMemes];
+  if (hasMore) {
+    showSentinel(true);
+    sentinelText(`已加载 ${gallery.children.length} / ${totalCount} · 继续下滑`);
   } else {
-    filtered = allMemes.filter(
-      (m) =>
-        m.tags.some((t) => t.toLowerCase().includes(q)) ||
-        (m.filename || "").toLowerCase().includes(q)
-    );
+    if (totalCount > PAGE_SIZE) {
+      showSentinel(true);
+      sentinelText(`已显示全部 ${totalCount} 张`);
+    } else {
+      showSentinel(false);
+    }
   }
-  render();
-  updateStats(
-    filtered.length === allMemes.length
-      ? `共 ${allMemes.length} 张`
-      : `${filtered.length} / ${allMemes.length} 张`
-  );
 }
 
 let debounceTimer;
 filterInput.addEventListener("input", () => {
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => applyFilter(), 200);
+  debounceTimer = setTimeout(() => loadFirst(), 300);
 });
+
+function setupLoadObserver() {
+  if (loadObserver) loadObserver.disconnect();
+  loadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries[0].isIntersecting && hasMore && !isLoading) {
+        loadMore();
+      }
+    },
+    { rootMargin: "200px" }
+  );
+  loadObserver.observe(loadSentinel);
+}
 
 refreshBtn.addEventListener("click", async () => {
   refreshBtn.disabled = true;
   refreshBtn.classList.add("spinning");
   refreshBtn.querySelector("span").textContent = "刷新中";
   try {
-    const result = await bridge.apiPost("refresh");
-    if (result.status === "ok") {
-      updateStats(`已刷新 · ${result.count} 张`);
-      await load();
-    } else {
-      updateStats("刷新失败: " + (result.message || "未知错误"));
-    }
+    await bridge.apiPost("refresh");
+    await loadFirst();
   } catch (err) {
     updateStats("刷新失败: " + err.message);
   } finally {
@@ -221,6 +274,9 @@ async function loadConfig() {
     document.getElementById("setting-min-score").value = cfg.min_tag_score;
     document.getElementById("setting-thumb-size").value = cfg.thumbnail_size;
     document.getElementById("setting-auto-refresh").checked = cfg.auto_refresh;
+    document.getElementById("setting-inject-enabled").checked = cfg.inject_prompt_enabled || false;
+    document.getElementById("setting-inject-prompt").value = cfg.inject_prompt || "";
+    toggleInjectFields();
 
     const embSelect = document.getElementById("setting-emb-provider");
     embSelect.innerHTML = '<option value="">自动选择</option>';
@@ -271,6 +327,20 @@ document.getElementById("setting-match-mode").addEventListener("change", (e) => 
   toggleEmbeddingFields(e.target.value);
 });
 
+document.getElementById("setting-inject-enabled").addEventListener("change", toggleInjectFields);
+
+function toggleInjectFields() {
+  const enabled = document.getElementById("setting-inject-enabled").checked;
+  const group = document.getElementById("inject-prompt-group");
+  if (enabled) {
+    group.style.opacity = "";
+    group.style.pointerEvents = "";
+  } else {
+    group.style.opacity = "0.5";
+    group.style.pointerEvents = "none";
+  }
+}
+
 function openSettings() {
   settingsPanel.classList.add("open");
   settingsOverlay.style.display = "block";
@@ -298,6 +368,8 @@ settingsSave.addEventListener("click", async () => {
       min_tag_score: parseFloat(document.getElementById("setting-min-score").value) || 0.0,
       thumbnail_size: parseInt(document.getElementById("setting-thumb-size").value) || 200,
       auto_refresh: document.getElementById("setting-auto-refresh").checked,
+      inject_prompt_enabled: document.getElementById("setting-inject-enabled").checked,
+      inject_prompt: document.getElementById("setting-inject-prompt").value,
     };
     const result = await bridge.apiPost("config", payload);
     if (result.status === "ok") {
@@ -326,4 +398,5 @@ settingsSave.addEventListener("click", async () => {
 });
 
 await bridge.ready();
-await load();
+await loadFirst();
+setupLoadObserver();

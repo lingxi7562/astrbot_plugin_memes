@@ -59,6 +59,11 @@
 
     <main id="gallery" class="gallery"></main>
 
+    <div id="load-sentinel" class="load-sentinel" style="display: none">
+      <div class="spinner"></div>
+      <span>加载中...</span>
+    </div>
+
     <div id="empty" class="empty" style="display: none">
       <div class="empty-icon">📭</div>
       <p class="empty-text">表情包库为空</p>
@@ -125,6 +130,28 @@
             <input type="checkbox" id="setting-auto-refresh" class="setting-toggle" />
             <label for="setting-auto-refresh" class="setting-toggle-label"></label>
           </div>
+        </div>
+
+        <hr class="setting-divider" />
+
+        <div class="setting-group">
+          <label class="setting-label" for="setting-inject-enabled">提示词注入</label>
+          <div class="setting-toggle-wrap">
+            <input type="checkbox" id="setting-inject-enabled" class="setting-toggle" />
+            <label for="setting-inject-enabled" class="setting-toggle-label"></label>
+          </div>
+          <p class="setting-hint">开启后每次 LLM 请求时注入提示词，提醒 LLM 使用 send_meme 工具</p>
+        </div>
+
+        <div class="setting-group" id="inject-prompt-group">
+          <label class="setting-label" for="setting-inject-prompt">注入提示词</label>
+          <textarea
+            id="setting-inject-prompt"
+            class="setting-textarea"
+            rows="8"
+            placeholder="在此输入要注入的提示词。可使用 {tag_list} 占位符，运行时替换为当前库中部分可用标签。"
+          ></textarea>
+          <p class="setting-hint">{tag_list} 会在运行时替换为当前库中前 80 个标签</p>
         </div>
       </div>
       <div class="settings-footer">

@@ -351,6 +351,23 @@ body {
   font-size: 13px;
 }
 
+/* ── Load Sentinel ── */
+.load-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.load-sentinel .spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+
 /* ── Lightbox ── */
 .lightbox {
   position: fixed;
@@ -581,9 +598,30 @@ body {
 }
 
 .setting-select:focus,
-.setting-input:focus {
+.setting-input:focus,
+.setting-textarea:focus {
   border-color: var(--input-focus);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.setting-textarea {
+  padding: 9px 12px;
+  border: 1.5px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.setting-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
 }
 
 .setting-toggle-wrap {
