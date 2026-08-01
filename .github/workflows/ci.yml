@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  astrbot-minimum-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the minimum supported AstrBot API surface
+        uses: actions/checkout@v4
+        with:
+          repository: AstrBotDevs/AstrBot
+          ref: v4.26.0
+          path: .astrbot-minimum
+          sparse-checkout: |
+            astrbot/__init__.py
+            astrbot/api/web.py
+            astrbot/core/star/context.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the minimum Web API import dependencies
+        run: python -m pip install "fastapi>=0.124" "starlette>=0.48"
+      - name: Verify the declared minimum AstrBot contract
+        run: python .github/scripts/check_astrbot_contract.py .astrbot-minimum
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run unit tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+      - name: Check Python syntax
+        run: python -m compileall -q main.py backend web_validation.py
+      - name: Check Plugin Page JavaScript syntax
+        run: node --check pages/gallery/app.js
+      - name: Check patch whitespace
+        run: git diff --check HEAD

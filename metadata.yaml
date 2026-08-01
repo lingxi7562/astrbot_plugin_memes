@@ -2,7 +2,7 @@ name: astrbot_plugin_memes
 display_name: 表情包库
 desc: LLM 自主调用发送表情包，复用智能图片对话标签库，支持 WebUI 预览与刷新
 author: lingxi
-version: 0.1.0
+version: 0.2.0
 repo: https://github.com/lingxi7562/astrbot_plugin_memes
 support_platforms:
   - aiocqhttp
@@ -23,4 +23,4 @@ support_platforms:
   - weixin_official_account
   - weixin_oc
 short_desc: LLM 自主调用发送表情包，WebUI 预览刷新
-astrbot_version: ">=4.5.7"
+astrbot_version: ">=4.26.0,<5"

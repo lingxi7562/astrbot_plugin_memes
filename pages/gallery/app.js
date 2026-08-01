@@ -3,6 +3,8 @@ const bridge = window.AstrBotPluginPage;
 let allMemes = [];
 let filtered = [];
 let currentConfig = {};
+let thumbnailObserver = null;
+const thumbnailLoaders = new WeakMap();
 
 const gallery = document.getElementById("gallery");
 const empty = document.getElementById("empty");
@@ -28,45 +30,152 @@ function showLoading() {
 
 function hideLoading() {
   loading.style.display = "none";
-  gallery.style.display = "grid";
 }
 
 function updateStats(text) {
   stats.textContent = text;
 }
 
+function showEmpty(title, hint) {
+  gallery.style.display = "none";
+  empty.style.display = "flex";
+  empty.querySelector(".empty-text").textContent = title;
+  empty.querySelector(".empty-hint").textContent = hint;
+}
+
+function readListItems(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (response && Array.isArray(response.items)) {
+    return response.items;
+  }
+  throw new Error("列表响应格式无效");
+}
+
+async function fetchAllMemes() {
+  const first = await bridge.apiGet("list", {
+    page: 1,
+    page_size: 100,
+    sort: "filename",
+  });
+  const items = readListItems(first);
+  if (Array.isArray(first)) {
+    return items;
+  }
+
+  const pageCount = Number.isSafeInteger(first.pages) && first.pages > 0
+    ? first.pages
+    : 1;
+  for (let page = 2; page <= pageCount; page += 1) {
+    const response = await bridge.apiGet("list", {
+      page,
+      page_size: 100,
+      sort: "filename",
+    });
+    items.push(...readListItems(response));
+  }
+  return items;
+}
+
 async function load() {
   showLoading();
   try {
-    allMemes = await bridge.apiGet("list");
+    allMemes = await fetchAllMemes();
     filtered = [...allMemes];
     render();
     updateStats(`共 ${allMemes.length} 张`);
-    if (allMemes.length === 0) {
-      gallery.style.display = "none";
-      empty.style.display = "flex";
-    }
   } catch (err) {
     updateStats("加载失败");
-    gallery.style.display = "none";
-    empty.style.display = "flex";
-    empty.querySelector(".empty-text").textContent = "加载失败";
-    empty.querySelector(".empty-hint").textContent = err.message;
+    showEmpty("加载失败", "请检查索引配置后重试");
     console.error(err);
   } finally {
     hideLoading();
   }
 }
 
+function scheduleThumbnailLoad(target, loader) {
+  if (!("IntersectionObserver" in window)) {
+    void loader();
+    return;
+  }
+  if (!thumbnailObserver) {
+    thumbnailObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        thumbnailObserver.unobserve(entry.target);
+        const loadThumbnail = thumbnailLoaders.get(entry.target);
+        thumbnailLoaders.delete(entry.target);
+        if (loadThumbnail) void loadThumbnail();
+      }
+    }, { rootMargin: "160px" });
+  }
+  thumbnailLoaders.set(target, loader);
+  thumbnailObserver.observe(target);
+}
+
+function appendThumbnail(imgWrap, meme) {
+  const filename = typeof meme.filename === "string" ? meme.filename : "";
+  const img = document.createElement("img");
+  img.className = "thumb";
+  img.loading = "lazy";
+  img.alt = filename;
+  img.addEventListener("click", () => openLightbox(meme));
+
+  if (typeof meme.thumb_b64 === "string" && meme.thumb_b64) {
+    img.src = `data:image/jpeg;base64,${meme.thumb_b64}`;
+    imgWrap.appendChild(img);
+    return;
+  }
+
+  if (typeof meme.id !== "string" || !meme.id) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "img-placeholder";
+    placeholder.textContent = "无图";
+    imgWrap.appendChild(placeholder);
+    return;
+  }
+
+  const placeholder = document.createElement("div");
+  placeholder.className = "img-placeholder";
+  placeholder.textContent = "加载中…";
+  img.style.display = "none";
+  imgWrap.appendChild(img);
+  imgWrap.appendChild(placeholder);
+
+  scheduleThumbnailLoad(imgWrap, async () => {
+    try {
+      const result = await bridge.apiGet("thumbnail", { id: meme.id });
+      if (!img.isConnected) return;
+      if (result && typeof result.thumb_b64 === "string" && result.thumb_b64) {
+        meme.thumb_b64 = result.thumb_b64;
+        img.src = `data:image/jpeg;base64,${result.thumb_b64}`;
+        img.style.display = "";
+        placeholder.remove();
+      } else {
+        placeholder.textContent = "无图";
+      }
+    } catch (err) {
+      if (placeholder.isConnected) placeholder.textContent = "缩略图不可用";
+      console.error("加载缩略图失败:", err);
+    }
+  });
+}
+
 function render(list) {
   list = list || filtered;
-  gallery.innerHTML = "";
+  if (thumbnailObserver) {
+    thumbnailObserver.disconnect();
+    thumbnailObserver = null;
+  }
+  gallery.replaceChildren();
 
   if (list.length === 0) {
-    gallery.style.display = "none";
-    empty.style.display = "flex";
-    empty.querySelector(".empty-text").textContent = "没有匹配的表情包";
-    empty.querySelector(".empty-hint").textContent = "试试其他关键词";
+    const hasFilter = filterInput.value.trim().length > 0;
+    showEmpty(
+      hasFilter ? "没有匹配的表情包" : "表情包库为空",
+      hasFilter ? "试试其他关键词" : "请检查索引文件配置"
+    );
     return;
   }
 
@@ -81,33 +190,24 @@ function render(list) {
     const imgWrap = document.createElement("div");
     imgWrap.className = "img-wrap";
 
-    if (meme.thumb_b64) {
-      const img = document.createElement("img");
-      img.className = "thumb";
-      img.loading = "lazy";
-      img.src = `data:image/jpeg;base64,${meme.thumb_b64}`;
-      img.alt = meme.filename;
-      img.addEventListener("click", () => openLightbox(meme));
-      imgWrap.appendChild(img);
-    } else {
-      const placeholder = document.createElement("div");
-      placeholder.className = "img-placeholder";
-      placeholder.textContent = "无图";
-      imgWrap.appendChild(placeholder);
-    }
+    appendThumbnail(imgWrap, meme);
 
     const info = document.createElement("div");
     info.className = "info";
 
     const name = document.createElement("div");
     name.className = "filename";
-    name.textContent = meme.filename;
-    name.title = meme.filename;
+    const filename = typeof meme.filename === "string" ? meme.filename : "";
+    name.textContent = filename;
+    name.title = filename;
     info.appendChild(name);
 
     const tagsDiv = document.createElement("div");
     tagsDiv.className = "tags";
-    for (const tag of (meme.tags || []).slice(0, 6)) {
+    const tags = Array.isArray(meme.tags)
+      ? meme.tags.filter((tag) => typeof tag === "string")
+      : [];
+    for (const tag of tags.slice(0, 6)) {
       const tagSpan = document.createElement("span");
       tagSpan.className = "tag";
       tagSpan.textContent = tag;
@@ -119,7 +219,7 @@ function render(list) {
       });
       tagsDiv.appendChild(tagSpan);
     }
-    const tagCount = (meme.tags || []).length;
+    const tagCount = tags.length;
     if (tagCount > 6) {
       const more = document.createElement("span");
       more.className = "tag tag-more";
@@ -142,9 +242,14 @@ function applyFilter(query) {
     filtered = [...allMemes];
   } else {
     filtered = allMemes.filter(
-      (m) =>
-        m.tags.some((t) => t.toLowerCase().includes(q)) ||
-        (m.filename || "").toLowerCase().includes(q)
+      (m) => {
+        const tags = Array.isArray(m.tags)
+          ? m.tags.filter((tag) => typeof tag === "string")
+          : [];
+        const filename = typeof m.filename === "string" ? m.filename : "";
+        return tags.some((tag) => tag.toLowerCase().includes(q)) ||
+          filename.toLowerCase().includes(q);
+      }
     );
   }
   render();
@@ -185,11 +290,20 @@ refreshBtn.addEventListener("click", async () => {
 function openLightbox(meme) {
   if (!meme.thumb_b64) return;
   lightboxImg.src = `data:image/jpeg;base64,${meme.thumb_b64}`;
-  lightboxImg.alt = meme.filename;
-  const tags = (meme.tags || []).join(" · ");
-  lightboxInfo.innerHTML = `<span class="lb-name">${meme.filename}</span>${
-    tags ? `<span class="lb-tags">${tags}</span>` : ""
-  }`;
+  lightboxImg.alt = typeof meme.filename === "string" ? meme.filename : "";
+  const tags = Array.isArray(meme.tags)
+    ? meme.tags.filter((tag) => typeof tag === "string").join(" · ")
+    : "";
+  const name = document.createElement("span");
+  name.className = "lb-name";
+  name.textContent = lightboxImg.alt;
+  lightboxInfo.replaceChildren(name);
+  if (tags) {
+    const tagList = document.createElement("span");
+    tagList.className = "lb-tags";
+    tagList.textContent = tags;
+    lightboxInfo.appendChild(tagList);
+  }
   lightbox.style.display = "flex";
 }
 
@@ -223,10 +337,20 @@ async function loadConfig() {
     document.getElementById("setting-auto-refresh").checked = cfg.auto_refresh;
 
     const embSelect = document.getElementById("setting-emb-provider");
-    embSelect.innerHTML = '<option value="">自动选择</option>';
+    embSelect.replaceChildren();
+    const automaticOption = document.createElement("option");
+    automaticOption.value = "";
+    automaticOption.textContent = "自动选择";
+    embSelect.appendChild(automaticOption);
     for (const p of cfg.available_embedding_providers || []) {
-      const selected = p.id === cfg.embedding_provider_id ? " selected" : "";
-      embSelect.innerHTML += `<option value="${p.id}"${selected}>${p.id} (${p.type}, ${p.dim}维)</option>`;
+      if (!p || typeof p.id !== "string") continue;
+      const option = document.createElement("option");
+      const providerType = typeof p.type === "string" ? p.type : "unknown";
+      const providerDim = Number.isFinite(p.dim) ? p.dim : "?";
+      option.value = p.id;
+      option.textContent = `${p.id} (${providerType}, ${providerDim}维)`;
+      option.selected = p.id === cfg.embedding_provider_id;
+      embSelect.appendChild(option);
     }
     embSelect.value = cfg.embedding_provider_id;
 

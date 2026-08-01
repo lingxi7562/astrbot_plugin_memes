@@ -12,6 +12,77 @@
     "hint": "用于拼接 rel_path 得到图片绝对路径",
     "default": "/AstrBot/data/plugin_data/astrbot_plugin_smart_imagechat_hub/"
   },
+  "library_sources": {
+    "description": "额外模板库来源",
+    "type": "template_list",
+    "hint": "最多 32 个来源；路径必须为绝对路径。禁用的来源会保留配置但不会加载。",
+    "default": [],
+    "templates": {
+      "json": {
+        "name": "JSON 索引来源",
+        "hint": "加载兼容 images 字段的 JSON 索引，并从数据根目录解析 rel_path。",
+        "display_item": "namespace",
+        "hide_hint_in_list": true,
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "namespace": {
+            "description": "来源命名空间",
+            "type": "string",
+            "hint": "用于生成唯一图片 ID，仅可使用字母、数字、点、下划线和连字符。",
+            "default": "json-library"
+          },
+          "index_path": {
+            "description": "JSON 索引绝对路径",
+            "type": "string",
+            "default": ""
+          },
+          "data_root": {
+            "description": "图片数据根目录绝对路径",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "directory": {
+        "name": "目录扫描来源",
+        "hint": "扫描目录中的常见图片文件，目录名和文件名会自动成为标签。",
+        "display_item": "namespace",
+        "hide_hint_in_list": true,
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "namespace": {
+            "description": "来源命名空间",
+            "type": "string",
+            "hint": "每个来源必须唯一；managed 和 legacy 为保留名称。",
+            "default": "directory-library"
+          },
+          "root": {
+            "description": "图片目录绝对路径",
+            "type": "string",
+            "default": ""
+          },
+          "recursive": {
+            "description": "递归扫描子目录",
+            "type": "bool",
+            "default": true
+          },
+          "tags": {
+            "description": "应用到此来源全部图片的标签",
+            "type": "list",
+            "default": []
+          }
+        }
+      }
+    }
+  },
   "max_match_candidates": {
     "description": "关键词匹配候选上限",
     "type": "int",
