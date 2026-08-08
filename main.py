@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -195,6 +196,7 @@ class MemesPlugin(Star):
         )
 
         match_mode = config.get("match_mode", "keyword")
+        self.match_mode = match_mode
         self.embedder: MemeEmbedder | None = None
 
         if match_mode in ("embedding", "hybrid"):
@@ -222,6 +224,7 @@ class MemesPlugin(Star):
                     f"回退到 keyword 模式"
                 )
                 match_mode = "keyword"
+        self.match_mode = match_mode
 
         max_candidates = config.get("max_match_candidates", 10)
         min_score = config.get("min_tag_score", 0.0)
@@ -250,6 +253,167 @@ class MemesPlugin(Star):
         self.context.add_llm_tools(SendMemeTool())
 
         self._register_web_apis()
+
+    @filter.command_group("meme")
+    def meme_commands():
+        """表情包命令组。"""
+
+        pass
+
+    @meme_commands.command("help", alias={"帮助"})
+    async def meme_help(self, event: AstrMessageEvent):
+        """显示表情包命令帮助。"""
+
+        yield event.plain_result(
+            "表情包命令：/meme search 关键词，/meme send 关键词，"
+            "/meme list [标签]，/meme refresh，/meme stats"
+        )
+
+    def _command_query(
+        self, event: AstrMessageEvent, subcommand: str, fallback: str = ""
+    ) -> str:
+        raw = getattr(event, "message_str", "")
+        if isinstance(raw, str):
+            parts = raw.strip().split(None, 2)
+            if len(parts) >= 3 and parts[1].casefold() == subcommand.casefold():
+                return parts[2].strip()[:200]
+        return fallback.strip()[:200] if isinstance(fallback, str) else ""
+
+    async def _command_matches(self, query: str, limit: int = 10) -> list[dict]:
+        query = query.strip()[:200]
+        if not query:
+            return []
+        if not self._index_is_loaded():
+            self._load_index()
+        tags = [query]
+        try:
+            if self.match_mode == "embedding" and self.embedder is not None:
+                return await self.matcher.match_embedding(tags, limit=limit, min_score=-1.0)
+            if self.match_mode == "hybrid" and self.embedder is not None:
+                return await self.matcher.match_hybrid(tags, limit=limit, min_score=0.0)
+            return self.matcher.match(tags, limit=limit, min_score=0.0)
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 命令搜索失败: {exc}")
+            return []
+
+    @staticmethod
+    def _command_scope(event: AstrMessageEvent) -> str:
+        value = getattr(event, "unified_msg_origin", "global")
+        if callable(value):
+            value = value()
+        return value if isinstance(value, str) and value.strip() else "global"
+
+    @staticmethod
+    def _command_summary(matches: list[dict]) -> str:
+        lines = []
+        for number, item in enumerate(matches[:10], 1):
+            filename = item.get("filename", "")
+            tags = item.get("tags", [])
+            tag_text = ", ".join(tag for tag in tags[:6] if isinstance(tag, str))
+            lines.append(f"{number}. {filename} [{tag_text}]")
+        return "\n".join(lines)
+
+    @meme_commands.command("search", alias={"搜", "查"})
+    async def meme_search(self, event: AstrMessageEvent, query: str = ""):
+        """搜索表情包但不发送图片。"""
+
+        query = self._command_query(event, "search", query)
+        matches = await self._command_matches(query)
+        if not matches:
+            yield event.plain_result("没有找到匹配的表情包，请换个关键词。")
+            return
+        yield event.plain_result(self._command_summary(matches))
+
+    @meme_commands.command("list", alias={"列表"})
+    async def meme_list(self, event: AstrMessageEvent, tag: str = ""):
+        """列出表情包标签或图片。"""
+
+        tag = self._command_query(event, "list", tag)
+        if not self._index_is_loaded():
+            self._load_index()
+        if not tag:
+            tags = self.index.get_unique_tags()[:50]
+            yield event.plain_result("可用标签：" + (", ".join(tags) or "暂无"))
+            return
+        matches = await self._command_matches(tag)
+        yield event.plain_result(
+            self._command_summary(matches) if matches else "没有找到匹配的表情包。"
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @meme_commands.command("refresh", alias={"刷新"})
+    async def meme_refresh(self, event: AstrMessageEvent):
+        """刷新表情包索引。"""
+
+        try:
+            report = self._load_index()
+            yield event.plain_result(f"表情包索引已刷新，共 {report.get('count', 0)} 张。")
+        except Exception:
+            yield event.plain_result("刷新失败，请检查来源状态。")
+
+    @meme_commands.command("stats", alias={"统计"})
+    async def meme_stats(self, event: AstrMessageEvent):
+        """查看发送、策略和路由统计。"""
+
+        analytics = self.analytics.report(5)
+        policy = self.policy.status()
+        yield event.plain_result(
+            "发送统计："
+            f"成功 {analytics['totals']['sends']}，失败 {analytics['totals']['failures']}，"
+            f"反馈 {analytics['totals']['feedback']}；"
+            f"当前配额拒绝 {policy['denied']} 次。"
+        )
+
+    @meme_commands.command("send", alias={"发", "发送"})
+    async def meme_send(self, event: AstrMessageEvent, query: str = ""):
+        """搜索并发送一张表情包。"""
+
+        query = self._command_query(event, "send", query)
+        matches = await self._command_matches(query)
+        valid = [
+            item
+            for item in matches
+            if isinstance(item.get("path"), str) and Path(item["path"]).is_file()
+        ]
+        if not valid:
+            yield event.plain_result("没有找到可发送的表情包。")
+            return
+        scope = self._command_scope(event)
+        routed, _ = self.router.route(valid, scope=scope)
+        decision = self.policy.reserve(routed, scope=scope, query_tags=[query])
+        if not decision.allowed:
+            yield event.plain_result(f"当前发送策略暂不允许发送（{decision.reason}）。")
+            return
+        try:
+            candidates = self.analytics.personalize(decision.candidates, scope=scope)
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 命令个性化排序不可用: {exc}")
+            candidates = list(decision.candidates)
+        best = self.selector.choose(
+            candidates,
+            scope=scope,
+            settings=self.selection_settings,
+        )
+        if best is None:
+            self.policy.release(scope, decision.reservation_id)
+            yield event.plain_result("当前没有可发送的候选。")
+            return
+        try:
+            yield event.image_result(str(best["path"]))
+        except Exception as exc:
+            self.selector.release(best, scope=scope)
+            self.policy.release(scope, decision.reservation_id)
+            try:
+                self.analytics.record_failure(scope, best.get("id"))
+            except Exception as analytics_exc:
+                logger.warning(f"[{PLUGIN_NAME}] 命令失败分析记录失败: {analytics_exc}")
+            logger.warning(f"[{PLUGIN_NAME}] 命令发送失败: {exc}")
+            yield event.plain_result("发送表情包失败，请稍后重试。")
+            return
+        try:
+            self.analytics.record_send(scope, best.get("id"), best.get("tags", []))
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 命令发送分析记录失败: {exc}")
 
     def _load_index(self) -> dict:
         """Load atomically, then invalidate thumbnails only after success."""

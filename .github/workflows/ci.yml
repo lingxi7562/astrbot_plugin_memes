@@ -22,6 +22,8 @@ jobs:
           sparse-checkout: |
             astrbot/__init__.py
             astrbot/api/web.py
+            astrbot/api/event/__init__.py
+            astrbot/api/event/filter/__init__.py
             astrbot/core/star/context.py
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5

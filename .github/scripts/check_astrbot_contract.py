@@ -12,6 +12,7 @@ from pathlib import Path
 
 EXPECTED_VERSION = "4.26.0"
 REQUIRED_WEB_EXPORTS = {"error_response", "json_response", "request"}
+REQUIRED_EVENT_EXPORTS = {"filter", "AstrMessageEvent"}
 
 
 def fail(message: str) -> None:
@@ -61,6 +62,24 @@ def main() -> None:
     if "register_web_api" not in context_methods:
         fail("minimum AstrBot Context does not provide register_web_api")
 
+    event_path = astrbot_checkout / "astrbot" / "api" / "event" / "__init__.py"
+    if not event_path.is_file():
+        fail("minimum AstrBot event API module is missing")
+    event_tree = ast.parse(event_path.read_text(encoding="utf-8"))
+    event_names = {
+        alias.asname or alias.name.split(".")[-1]
+        for node in ast.walk(event_tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    event_defs = {
+        node.name
+        for node in ast.walk(event_tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if not REQUIRED_EVENT_EXPORTS.issubset(event_names | event_defs):
+        fail("minimum AstrBot event API is missing command exports")
+
     plugin_tree = ast.parse((repository / "main.py").read_text(encoding="utf-8"))
     imported_web_names = {
         alias.name
@@ -71,6 +90,16 @@ def main() -> None:
     unknown_imports = sorted(imported_web_names - REQUIRED_WEB_EXPORTS)
     if unknown_imports:
         fail(f"plugin imports unverified AstrBot Web API names: {unknown_imports}")
+
+    imported_event_names = {
+        alias.name
+        for node in ast.walk(plugin_tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "astrbot.api.event"
+        for alias in node.names
+    }
+    unknown_event_imports = sorted(imported_event_names - REQUIRED_EVENT_EXPORTS)
+    if unknown_event_imports:
+        fail(f"plugin imports unverified AstrBot event API names: {unknown_event_imports}")
 
     print(f"AstrBot {EXPECTED_VERSION} API contract verified")
 
