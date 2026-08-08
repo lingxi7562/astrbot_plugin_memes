@@ -3,6 +3,7 @@ const bridge = window.AstrBotPluginPage;
 let allMemes = [];
 let filtered = [];
 let currentConfig = {};
+let currentMeme = null;
 let thumbnailObserver = null;
 const thumbnailLoaders = new WeakMap();
 
@@ -21,6 +22,9 @@ const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxInfo = document.getElementById("lightbox-info");
 const lightboxClose = document.getElementById("lightbox-close");
+const feedbackPositive = document.getElementById("feedback-positive");
+const feedbackNegative = document.getElementById("feedback-negative");
+const feedbackStatus = document.getElementById("feedback-status");
 
 function showLoading() {
   loading.style.display = "flex";
@@ -289,6 +293,8 @@ refreshBtn.addEventListener("click", async () => {
 
 function openLightbox(meme) {
   if (!meme.thumb_b64) return;
+  currentMeme = meme;
+  feedbackStatus.textContent = "";
   lightboxImg.src = `data:image/jpeg;base64,${meme.thumb_b64}`;
   lightboxImg.alt = typeof meme.filename === "string" ? meme.filename : "";
   const tags = Array.isArray(meme.tags)
@@ -307,12 +313,37 @@ function openLightbox(meme) {
   lightbox.style.display = "flex";
 }
 
+async function submitFeedback(rating) {
+  if (!currentMeme || typeof currentMeme.id !== "string") return;
+  feedbackPositive.disabled = true;
+  feedbackNegative.disabled = true;
+  feedbackStatus.textContent = "提交中…";
+  try {
+    const result = await bridge.apiPost("feedback", {
+      id: currentMeme.id,
+      rating,
+    });
+    feedbackStatus.textContent = result && result.status === "ok"
+      ? "已记录，谢谢反馈"
+      : "反馈未保存";
+  } catch (err) {
+    feedbackStatus.textContent = "反馈失败，请稍后重试";
+    console.error("提交反馈失败:", err);
+  } finally {
+    feedbackPositive.disabled = false;
+    feedbackNegative.disabled = false;
+  }
+}
+
 function closeLightbox() {
   lightbox.style.display = "none";
   lightboxImg.src = "";
+  currentMeme = null;
 }
 
 lightboxClose.addEventListener("click", closeLightbox);
+feedbackPositive.addEventListener("click", () => void submitFeedback(1));
+feedbackNegative.addEventListener("click", () => void submitFeedback(-1));
 lightbox.querySelector(".lightbox-backdrop").addEventListener("click", closeLightbox);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {

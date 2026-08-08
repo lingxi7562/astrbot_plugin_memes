@@ -9,6 +9,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
+from .analytics import MemeAnalytics
 from .selector import MemeSelector, SelectionSettings
 
 
@@ -59,6 +60,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
     _embedding_fallback: bool = True
     _selector: MemeSelector | None = None
     _selection_settings: SelectionSettings = SelectionSettings()
+    _analytics: MemeAnalytics | None = None
 
     @classmethod
     def configure(
@@ -71,6 +73,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         embedding_fallback: bool = True,
         selector: MemeSelector | None = None,
         selection_settings: SelectionSettings | None = None,
+        analytics: MemeAnalytics | None = None,
     ):
         cls._matcher = matcher
         cls._index = index
@@ -80,6 +83,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         cls._embedding_fallback = embedding_fallback
         cls._selector = selector
         cls._selection_settings = selection_settings or SelectionSettings()
+        cls._analytics = analytics
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -160,6 +164,12 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         event = context.context.event
         scope = self._event_scope(event)
         selector = SendMemeTool._selector
+        analytics = SendMemeTool._analytics
+        if analytics is not None:
+            try:
+                valid_matches = analytics.personalize(valid_matches, scope=scope)
+            except Exception as exc:
+                logger.warning(f"[astrbot_plugin_memes] 个性化排序不可用，已使用原始候选: {exc}")
         if selector is not None:
             best = selector.choose(
                 valid_matches,
@@ -176,6 +186,11 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
 
         try:
             await event.send(event.chain_result([Image.fromFileSystem(str(img_path))]))
+            if analytics is not None:
+                try:
+                    analytics.record_send(scope, best.get("id"), best.get("tags", []))
+                except Exception as exc:
+                    logger.warning(f"[astrbot_plugin_memes] 发送分析记录失败: {exc}")
             logger.info(
                 f"[astrbot_plugin_memes] 发送表情包: {best['filename']} "
                 f"(标签: {', '.join(best['matched_tags'])})"
@@ -183,6 +198,11 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         except Exception as e:
             if selector is not None:
                 selector.release(best, scope=scope)
+            if analytics is not None:
+                try:
+                    analytics.record_failure(scope, best.get("id"))
+                except Exception as exc:
+                    logger.warning(f"[astrbot_plugin_memes] 发送失败分析记录失败: {exc}")
             logger.error(f"[astrbot_plugin_memes] 发送表情包失败: {e}")
             return ToolExecResult(
                 content=[{"type": "text", "text": f"发送表情包时出错: {e}"}]

@@ -126,6 +126,24 @@
     "hint": "候选中的相同文件内容只保留一张，按文件内容摘要判断",
     "default": true
   },
+  "analytics_enabled": {
+    "description": "启用发送分析与反馈学习",
+    "type": "bool",
+    "hint": "保存有界的聚合统计；会话标识会先哈希，不记录聊天原文",
+    "default": true
+  },
+  "analytics_retention_days": {
+    "description": "分析数据保留天数",
+    "type": "int",
+    "hint": "超过保留期的会话偏好与事件会自动清理",
+    "default": 30
+  },
+  "personalization_strength": {
+    "description": "个性化排序强度",
+    "type": "float",
+    "hint": "根据反馈调整候选权重，0 表示关闭个性化",
+    "default": 0.5
+  },
   "auto_refresh": {
     "description": "启动时自动加载索引",
     "type": "bool",

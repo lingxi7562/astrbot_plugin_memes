@@ -5,6 +5,7 @@ from astrbot.api.star import Context, Star
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
+from .backend.analytics import AnalyticsSettings, MemeAnalytics
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
@@ -45,6 +46,16 @@ class MemesPlugin(Star):
             / "library"
         )
         managed_root.mkdir(parents=True, exist_ok=True)
+        self.analytics = MemeAnalytics(
+            managed_root.parent / "analytics.json",
+            AnalyticsSettings.safe(
+                enabled=config.get("analytics_enabled", True),
+                retention_days=config.get("analytics_retention_days", 30),
+                personalization_strength=config.get(
+                    "personalization_strength", 0.5
+                ),
+            ),
+        )
         sources: list[dict] = [
             {
                 "type": "directory",
@@ -197,6 +208,7 @@ class MemesPlugin(Star):
             embedding_fallback=config.get("embedding_fallback", True),
             selector=self.selector,
             selection_settings=self.selection_settings,
+            analytics=self.analytics,
         )
         self.context.add_llm_tools(SendMemeTool())
 
@@ -247,6 +259,24 @@ class MemesPlugin(Star):
             self._api_selection,
             ["GET"],
             "获取表情包选择策略状态",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/analytics",
+            self._api_analytics,
+            ["GET"],
+            "获取发送分析与反馈统计",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/feedback",
+            self._api_feedback,
+            ["POST"],
+            "提交表情包反馈",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/analytics/reset",
+            self._api_analytics_reset,
+            ["POST"],
+            "清理发送分析数据",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -421,6 +451,45 @@ class MemesPlugin(Star):
             }
         )
 
+    async def _api_analytics(self):
+        report = self.analytics.report()
+        for item in report.get("top_images", []):
+            image = self.index.images.get(item.get("id"))
+            if isinstance(image, dict):
+                item["filename"] = image.get("filename", "")
+                item["tags"] = image.get("tags", [])
+        return json_response(report)
+
+    async def _api_feedback(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        image_id = body.get("id")
+        rating = body.get("rating")
+        scope = body.get("scope", "global")
+        if not isinstance(image_id, str) or not image_id.strip() or len(image_id) > 512:
+            return error_response("id 无效", status_code=400)
+        image_id = image_id.strip()
+        if isinstance(rating, bool) or not isinstance(rating, int) or rating not in {-1, 1}:
+            return error_response("rating 必须是 -1 或 1", status_code=400)
+        if not isinstance(scope, str) or len(scope) > 512:
+            return error_response("scope 无效", status_code=400)
+        if image_id not in self.index.images:
+            return error_response("表情包不存在", status_code=404)
+        item = self.index.images[image_id]
+        tags = item.get("tags", []) if isinstance(item, dict) else []
+        if not self.analytics.record_feedback(scope, image_id, rating, tags):
+            return error_response("反馈未启用或参数无效", status_code=400)
+        return json_response({"status": "ok", "analytics": self.analytics.report(10)})
+
+    async def _api_analytics_reset(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict) or body.get("confirm") != "RESET":
+            return error_response("需要 confirm=RESET 才能清理统计", status_code=400)
+        if not self.analytics.reset():
+            return error_response("清理统计失败", status_code=500)
+        return json_response({"status": "ok"})
+
     async def _api_get_config(self):
         emb_providers = []
         for p in self.context.get_all_embedding_providers():
@@ -439,6 +508,13 @@ class MemesPlugin(Star):
             ),
             "selection_history_size": self.config.get("selection_history_size", 20),
             "deduplicate_files": self.config.get("deduplicate_files", True),
+            "analytics_enabled": self.config.get("analytics_enabled", True),
+            "analytics_retention_days": self.config.get(
+                "analytics_retention_days", 30
+            ),
+            "personalization_strength": self.config.get(
+                "personalization_strength", 0.5
+            ),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),

@@ -9,7 +9,16 @@ from __future__ import annotations
 from typing import Any
 
 
-__all__ = ["MemeIndex", "TagMatcher", "SendMemeTool", "MemeEmbedder"]
+__all__ = [
+    "MemeIndex",
+    "TagMatcher",
+    "SendMemeTool",
+    "MemeEmbedder",
+    "MemeSelector",
+    "SelectionSettings",
+    "MemeAnalytics",
+    "AnalyticsSettings",
+]
 
 
 def __getattr__(name: str) -> Any:
@@ -29,4 +38,12 @@ def __getattr__(name: str) -> Any:
         from .embedder import MemeEmbedder
 
         return MemeEmbedder
+    if name in {"MemeSelector", "SelectionSettings"}:
+        from .selector import MemeSelector, SelectionSettings
+
+        return {"MemeSelector": MemeSelector, "SelectionSettings": SelectionSettings}[name]
+    if name in {"MemeAnalytics", "AnalyticsSettings"}:
+        from .analytics import AnalyticsSettings, MemeAnalytics
+
+        return {"MemeAnalytics": MemeAnalytics, "AnalyticsSettings": AnalyticsSettings}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

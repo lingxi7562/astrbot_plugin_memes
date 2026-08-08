@@ -23,6 +23,9 @@ class ConfigValidationTests(unittest.TestCase):
             "selection_cooldown_seconds": 120.0,
             "selection_history_size": 20,
             "deduplicate_files": True,
+            "analytics_enabled": True,
+            "analytics_retention_days": 30,
+            "personalization_strength": 0.5,
             "auto_refresh": True,
             "thumbnail_size": 240,
         }
@@ -58,6 +61,9 @@ class ConfigValidationTests(unittest.TestCase):
             {"selection_cooldown_seconds": math.inf},
             {"selection_history_size": 1001},
             {"deduplicate_files": 1},
+            {"analytics_enabled": 1},
+            {"analytics_retention_days": 0},
+            {"personalization_strength": 2.1},
             {"unexpected": "value"},
         )
         for payload in invalid_payloads:

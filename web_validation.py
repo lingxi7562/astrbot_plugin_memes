@@ -21,6 +21,9 @@ CONFIG_KEYS = frozenset(
         "selection_cooldown_seconds",
         "selection_history_size",
         "deduplicate_files",
+        "analytics_enabled",
+        "analytics_retention_days",
+        "personalization_strength",
         "auto_refresh",
         "thumbnail_size",
         "library_sources",
@@ -101,7 +104,7 @@ def validate_config_payload(
             if value and value not in provider_ids:
                 raise ValidationError("embedding_provider_id 不存在")
             validated[key] = value
-        elif key in {"embedding_fallback", "auto_refresh"}:
+        elif key in {"embedding_fallback", "auto_refresh", "analytics_enabled"}:
             if not isinstance(value, bool):
                 raise ValidationError(f"{key} 必须是布尔值")
             validated[key] = value
@@ -123,6 +126,10 @@ def validate_config_payload(
             if not isinstance(value, bool):
                 raise ValidationError(f"{key} 必须是布尔值")
             validated[key] = value
+        elif key == "analytics_retention_days":
+            validated[key] = _validate_int(value, key, 1, 365)
+        elif key == "personalization_strength":
+            validated[key] = _validate_number(value, key, 0.0, 2.0)
         elif key == "thumbnail_size":
             validated[key] = _validate_int(value, key, 50, 400)
         elif key == "library_sources":

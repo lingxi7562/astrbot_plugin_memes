@@ -116,7 +116,9 @@ class MemeSelector:
                 if settings.deduplicate_files
                 else f"id:{image_id}"
             )
-            score = self._score(candidate.get("score"))
+            score = self._score(
+                candidate.get("selection_score", candidate.get("score"))
+            )
             previous = unique.get(content_key)
             if previous is None or (score, image_id) > (previous[1], previous[0].get("id", "")):
                 unique[content_key] = (candidate, score)
