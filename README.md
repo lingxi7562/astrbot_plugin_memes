@@ -94,6 +94,7 @@ send_meme(tags=["回复"], persona="严肃")
 - **缩略图尺寸** — 预览图的大小
 - **额外模板库来源** — 组合 JSON 索引与目录扫描来源，可逐项启用、设置命名空间和来源标签
 - **表情包包与人格路由** — 使用 `meme_packs` 按来源命名空间/标签组织风格，`persona_packs` 将人格别名映射到包；`GET /astrbot_plugin_memes/routing` 可查看路由状态
+- **权限与内容治理** — `quota_*` 限制单会话发送频率，`blocked_*`/`allowed_tags` 控制内容，`max_file_bytes` 防止异常大文件；`GET /astrbot_plugin_memes/policy` 可查看聚合状态
 
 发送分析可通过 `GET /astrbot_plugin_memes/analytics` 查看，反馈使用
 `POST /astrbot_plugin_memes/feedback`，请求体为

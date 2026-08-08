@@ -41,6 +41,14 @@ class ConfigValidationTests(unittest.TestCase):
             "default_pack": "fun",
             "persona_packs": {"搞怪": "fun"},
             "sticky_sessions": True,
+            "policy_enabled": True,
+            "quota_window_seconds": 60.0,
+            "quota_max_sends": 8,
+            "blocked_tags": ["nsfw"],
+            "allowed_tags": [],
+            "blocked_namespaces": ["legacy"],
+            "blocked_ids": ["managed:bad"],
+            "max_file_bytes": 20 * 1024 * 1024,
             "auto_refresh": True,
             "thumbnail_size": 240,
         }
@@ -83,6 +91,11 @@ class ConfigValidationTests(unittest.TestCase):
             {"meme_packs": [{"id": "fun"}, {"id": "fun"}]},
             {"persona_packs": {"persona": "BAD ID"}},
             {"sticky_sessions": 1},
+            {"policy_enabled": 1},
+            {"quota_window_seconds": 0},
+            {"quota_max_sends": 1001},
+            {"blocked_tags": "nsfw"},
+            {"max_file_bytes": 1023},
             {"unexpected": "value"},
         )
         for payload in invalid_payloads:

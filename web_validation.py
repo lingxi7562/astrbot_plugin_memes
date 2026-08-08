@@ -28,6 +28,14 @@ CONFIG_KEYS = frozenset(
         "default_pack",
         "persona_packs",
         "sticky_sessions",
+        "policy_enabled",
+        "quota_window_seconds",
+        "quota_max_sends",
+        "blocked_tags",
+        "allowed_tags",
+        "blocked_namespaces",
+        "blocked_ids",
+        "max_file_bytes",
         "auto_refresh",
         "thumbnail_size",
         "library_sources",
@@ -150,6 +158,20 @@ def validate_config_payload(
             if not isinstance(value, bool):
                 raise ValidationError("sticky_sessions 必须是布尔值")
             validated[key] = value
+        elif key == "policy_enabled":
+            if not isinstance(value, bool):
+                raise ValidationError("policy_enabled 必须是布尔值")
+            validated[key] = value
+        elif key == "quota_window_seconds":
+            validated[key] = _validate_number(value, key, 1.0, 24 * 3600.0)
+        elif key == "quota_max_sends":
+            validated[key] = _validate_int(value, key, 1, 1000)
+        elif key in {"blocked_tags", "allowed_tags", "blocked_namespaces"}:
+            validated[key] = _parse_policy_values(value, key, 128, 128)
+        elif key == "blocked_ids":
+            validated[key] = _parse_policy_values(value, key, 256, 512)
+        elif key == "max_file_bytes":
+            validated[key] = _validate_int(value, key, 1024, 100 * 1024 * 1024)
         elif key == "thumbnail_size":
             validated[key] = _validate_int(value, key, 50, 400)
         elif key == "library_sources":
@@ -168,6 +190,25 @@ def _parse_pack_values(value: Any, field: str) -> list[str]:
             raise ValidationError(f"{field}[{number}] 必须是字符串")
         item = " ".join(raw.split()).strip().casefold()
         if not item or len(item) > 128:
+            raise ValidationError(f"{field}[{number}] 格式无效")
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _parse_policy_values(
+    value: Any, field: str, maximum: int, item_length: int
+) -> list[str]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValidationError(f"{field} 必须是至多 {maximum} 项的列表")
+    result: list[str] = []
+    seen: set[str] = set()
+    for number, raw in enumerate(value):
+        if not isinstance(raw, str):
+            raise ValidationError(f"{field}[{number}] 必须是字符串")
+        item = " ".join(raw.split()).strip().casefold()
+        if not item or len(item) > item_length:
             raise ValidationError(f"{field}[{number}] 格式无效")
         if item not in seen:
             seen.add(item)

@@ -10,6 +10,7 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .analytics import MemeAnalytics
+from .policy import MemePolicy, PolicySettings
 from .routing import MemeRouter, RoutingSettings
 from .selector import MemeSelector, SelectionSettings
 
@@ -72,6 +73,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
     _analytics: MemeAnalytics | None = None
     _router: MemeRouter | None = None
     _routing_settings: RoutingSettings = RoutingSettings()
+    _policy: MemePolicy | None = None
+    _policy_settings: PolicySettings = PolicySettings()
 
     @classmethod
     def configure(
@@ -87,6 +90,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         analytics: MemeAnalytics | None = None,
         router: MemeRouter | None = None,
         routing_settings: RoutingSettings | None = None,
+        policy: MemePolicy | None = None,
+        policy_settings: PolicySettings | None = None,
     ):
         cls._matcher = matcher
         cls._index = index
@@ -99,6 +104,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         cls._analytics = analytics
         cls._router = router
         cls._routing_settings = routing_settings or RoutingSettings()
+        cls._policy = policy
+        cls._policy_settings = policy_settings or PolicySettings()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -193,6 +200,24 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 pack=pack[:64],
                 persona=persona[:64],
             )
+        policy = SendMemeTool._policy
+        policy_decision = None
+        if policy is not None:
+            policy_decision = policy.reserve(
+                valid_matches,
+                scope=scope,
+                query_tags=tags,
+            )
+            if not policy_decision.allowed:
+                return ToolExecResult(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": f"当前发送策略暂不允许发送（{policy_decision.reason}）。",
+                        }
+                    ]
+                )
+            valid_matches = list(policy_decision.candidates)
         selector = SendMemeTool._selector
         analytics = SendMemeTool._analytics
         if analytics is not None:
@@ -209,6 +234,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         else:
             best = valid_matches[0]
         if best is None:
+            if policy is not None and policy_decision is not None:
+                policy.release(scope, policy_decision.reservation_id)
             return ToolExecResult(
                 content=[{"type": "text", "text": "暂时没有可发送的表情包。"}]
             )
@@ -229,6 +256,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         except Exception as e:
             if selector is not None:
                 selector.release(best, scope=scope)
+            if policy is not None and policy_decision is not None:
+                policy.release(scope, policy_decision.reservation_id)
             if analytics is not None:
                 try:
                     analytics.record_failure(scope, best.get("id"))

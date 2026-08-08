@@ -9,6 +9,7 @@ from .backend.analytics import AnalyticsSettings, MemeAnalytics
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
+from .backend.policy import MemePolicy, PolicySettings
 from .backend.routing import MemeRouter, RoutingSettings
 from .backend.selector import MemeSelector, SelectionSettings
 from .backend.thumbnails import ThumbnailManager, render_pillow_thumbnail
@@ -54,6 +55,17 @@ class MemesPlugin(Star):
             sticky_sessions=config.get("sticky_sessions", True),
         )
         self.router = MemeRouter(self.routing_settings)
+        self.policy_settings = PolicySettings.safe(
+            enabled=config.get("policy_enabled", True),
+            quota_window_seconds=config.get("quota_window_seconds", 60.0),
+            quota_max_sends=config.get("quota_max_sends", 8),
+            blocked_tags=config.get("blocked_tags", []),
+            allowed_tags=config.get("allowed_tags", []),
+            blocked_namespaces=config.get("blocked_namespaces", []),
+            blocked_ids=config.get("blocked_ids", []),
+            max_file_bytes=config.get("max_file_bytes", 20 * 1024 * 1024),
+        )
+        self.policy = MemePolicy(self.policy_settings)
         self.analytics = MemeAnalytics(
             managed_root.parent / "analytics.json",
             AnalyticsSettings.safe(
@@ -219,6 +231,8 @@ class MemesPlugin(Star):
             analytics=self.analytics,
             router=self.router,
             routing_settings=self.routing_settings,
+            policy=self.policy,
+            policy_settings=self.policy_settings,
         )
         self.context.add_llm_tools(SendMemeTool())
 
@@ -293,6 +307,12 @@ class MemesPlugin(Star):
             self._api_routing,
             ["GET"],
             "获取表情包包与人格路由状态",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/policy",
+            self._api_policy,
+            ["GET"],
+            "获取发送权限与内容策略状态",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -509,6 +529,9 @@ class MemesPlugin(Star):
     async def _api_routing(self):
         return json_response(self.router.status())
 
+    async def _api_policy(self):
+        return json_response(self.policy.status())
+
     async def _api_get_config(self):
         emb_providers = []
         for p in self.context.get_all_embedding_providers():
@@ -538,6 +561,16 @@ class MemesPlugin(Star):
             "default_pack": self.config.get("default_pack", ""),
             "persona_packs": self.config.get("persona_packs", {}),
             "sticky_sessions": self.config.get("sticky_sessions", True),
+            "policy_enabled": self.config.get("policy_enabled", True),
+            "quota_window_seconds": self.config.get("quota_window_seconds", 60.0),
+            "quota_max_sends": self.config.get("quota_max_sends", 8),
+            "blocked_tags": self.config.get("blocked_tags", []),
+            "allowed_tags": self.config.get("allowed_tags", []),
+            "blocked_namespaces": self.config.get("blocked_namespaces", []),
+            "blocked_ids": self.config.get("blocked_ids", []),
+            "max_file_bytes": self.config.get(
+                "max_file_bytes", 20 * 1024 * 1024
+            ),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),
@@ -593,4 +626,5 @@ class MemesPlugin(Star):
     async def terminate(self) -> None:
         self.selector.clear()
         self.router.clear()
+        self.policy.clear()
         await self._thumbnails.close()

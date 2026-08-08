@@ -20,6 +20,8 @@ __all__ = [
     "AnalyticsSettings",
     "MemeRouter",
     "RoutingSettings",
+    "MemePolicy",
+    "PolicySettings",
 ]
 
 
@@ -52,4 +54,8 @@ def __getattr__(name: str) -> Any:
         from .routing import MemeRouter, RoutingSettings
 
         return {"MemeRouter": MemeRouter, "RoutingSettings": RoutingSettings}[name]
+    if name in {"MemePolicy", "PolicySettings"}:
+        from .policy import MemePolicy, PolicySettings
+
+        return {"MemePolicy": MemePolicy, "PolicySettings": PolicySettings}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

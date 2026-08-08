@@ -169,6 +169,54 @@
     "hint": "同一会话在未显式指定 pack 时保持同一包，避免风格漂移",
     "default": true
   },
+  "policy_enabled": {
+    "description": "启用发送权限与内容策略",
+    "type": "bool",
+    "hint": "关闭后不执行配额与黑白名单过滤",
+    "default": true
+  },
+  "quota_window_seconds": {
+    "description": "会话配额时间窗(秒)",
+    "type": "float",
+    "hint": "同一会话在时间窗内最多发送 quota_max_sends 张",
+    "default": 60.0
+  },
+  "quota_max_sends": {
+    "description": "会话配额上限",
+    "type": "int",
+    "hint": "限制单个会话在时间窗内的发送次数",
+    "default": 8
+  },
+  "blocked_tags": {
+    "description": "禁止的标签",
+    "type": "list",
+    "hint": "命中这些查询或图片标签时不发送",
+    "default": []
+  },
+  "allowed_tags": {
+    "description": "允许的标签",
+    "type": "list",
+    "hint": "非空时仅发送至少命中一个标签的图片",
+    "default": []
+  },
+  "blocked_namespaces": {
+    "description": "禁止的来源命名空间",
+    "type": "list",
+    "hint": "例如 [\"legacy\"] 可屏蔽旧来源",
+    "default": []
+  },
+  "blocked_ids": {
+    "description": "禁止发送的图片 ID",
+    "type": "list",
+    "hint": "用于下架单张图片，最多 256 项",
+    "default": []
+  },
+  "max_file_bytes": {
+    "description": "单张图片大小上限",
+    "type": "int",
+    "hint": "发送前检查文件大小，范围 1 KiB 至 100 MiB",
+    "default": 20971520
+  },
   "auto_refresh": {
     "description": "启动时自动加载索引",
     "type": "bool",
