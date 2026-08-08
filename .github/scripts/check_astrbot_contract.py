@@ -77,8 +77,11 @@ def main() -> None:
         for node in ast.walk(event_tree)
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    if not REQUIRED_EVENT_EXPORTS.issubset(event_names | event_defs):
-        fail("minimum AstrBot event API is missing command exports")
+    if "AstrMessageEvent" not in event_names | event_defs:
+        fail("minimum AstrBot event API is missing AstrMessageEvent")
+    filter_path = astrbot_checkout / "astrbot" / "api" / "event" / "filter" / "__init__.py"
+    if not filter_path.is_file():
+        fail("minimum AstrBot command filter module is missing")
 
     plugin_tree = ast.parse((repository / "main.py").read_text(encoding="utf-8"))
     imported_web_names = {
