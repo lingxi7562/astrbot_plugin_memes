@@ -42,9 +42,10 @@ def main() -> None:
     missing = sorted(name for name in REQUIRED_WEB_EXPORTS if not hasattr(web_module, name))
     if missing:
         fail(f"minimum AstrBot Web API is missing exports: {missing}")
-    if not callable(getattr(web_module.request, "json", None)):
+    request_type = type(web_module.request)
+    if not callable(getattr(request_type, "json", None)):
         fail("minimum AstrBot request proxy does not provide async JSON parsing")
-    if not hasattr(web_module.request, "query"):
+    if not isinstance(getattr(request_type, "query", None), property):
         fail("minimum AstrBot request proxy does not provide query parameters")
 
     context_tree = ast.parse(
