@@ -217,6 +217,12 @@
     "hint": "发送前检查文件大小，范围 1 KiB 至 100 MiB",
     "default": 20971520
   },
+  "backup_retention_count": {
+    "description": "备份保留份数",
+    "type": "int",
+    "hint": "最多保留 20 份最近备份，恢复前会自动创建恢复点",
+    "default": 20
+  },
   "auto_refresh": {
     "description": "启动时自动加载索引",
     "type": "bool",

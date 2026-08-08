@@ -24,6 +24,8 @@ __all__ = [
     "PolicySettings",
     "ManagedCatalog",
     "CatalogError",
+    "BackupManager",
+    "BackupError",
 ]
 
 
@@ -64,4 +66,8 @@ def __getattr__(name: str) -> Any:
         from .catalog import CatalogError, ManagedCatalog
 
         return {"ManagedCatalog": ManagedCatalog, "CatalogError": CatalogError}[name]
+    if name in {"BackupManager", "BackupError"}:
+        from .backup import BackupError, BackupManager
+
+        return {"BackupManager": BackupManager, "BackupError": BackupError}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

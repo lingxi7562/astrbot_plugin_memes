@@ -49,6 +49,7 @@ class ConfigValidationTests(unittest.TestCase):
             "blocked_namespaces": ["legacy"],
             "blocked_ids": ["managed:bad"],
             "max_file_bytes": 20 * 1024 * 1024,
+            "backup_retention_count": 20,
             "auto_refresh": True,
             "thumbnail_size": 240,
         }
@@ -96,6 +97,7 @@ class ConfigValidationTests(unittest.TestCase):
             {"quota_max_sends": 1001},
             {"blocked_tags": "nsfw"},
             {"max_file_bytes": 1023},
+            {"backup_retention_count": 0},
             {"unexpected": "value"},
         )
         for payload in invalid_payloads:

@@ -36,6 +36,7 @@ CONFIG_KEYS = frozenset(
         "blocked_namespaces",
         "blocked_ids",
         "max_file_bytes",
+        "backup_retention_count",
         "auto_refresh",
         "thumbnail_size",
         "library_sources",
@@ -172,6 +173,8 @@ def validate_config_payload(
             validated[key] = _parse_policy_values(value, key, 256, 512)
         elif key == "max_file_bytes":
             validated[key] = _validate_int(value, key, 1024, 100 * 1024 * 1024)
+        elif key == "backup_retention_count":
+            validated[key] = _validate_int(value, key, 1, 20)
         elif key == "thumbnail_size":
             validated[key] = _validate_int(value, key, 50, 400)
         elif key == "library_sources":

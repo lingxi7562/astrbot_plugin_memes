@@ -6,6 +6,7 @@ from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .backend.analytics import AnalyticsSettings, MemeAnalytics
+from .backend.backup import BackupError, BackupManager
 from .backend.catalog import CatalogError, ManagedCatalog
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
@@ -53,6 +54,12 @@ class MemesPlugin(Star):
         self.catalog = ManagedCatalog(
             managed_root,
             managed_root.parent / "managed_metadata.json",
+        )
+        self.backups = BackupManager(
+            managed_root,
+            managed_root.parent / "managed_metadata.json",
+            managed_root.parent / "backups",
+            retention_count=config.get("backup_retention_count", 20),
         )
         self.routing_settings = RoutingSettings.safe(
             packs=config.get("meme_packs", []),
@@ -351,6 +358,30 @@ class MemesPlugin(Star):
             self._api_batch,
             ["POST"],
             "批量管理 managed 图片",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/backups",
+            self._api_backups,
+            ["GET"],
+            "列出 managed 库备份",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/backup/create",
+            self._api_backup_create,
+            ["POST"],
+            "创建 managed 库备份",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/backup/restore",
+            self._api_backup_restore,
+            ["POST"],
+            "恢复 managed 库备份",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/backup/delete",
+            self._api_backup_delete,
+            ["POST"],
+            "删除 managed 库备份",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -682,6 +713,41 @@ class MemesPlugin(Star):
             {"status": "ok", "completed": completed, "errors": errors}
         )
 
+    async def _api_backups(self):
+        return json_response({"items": self.backups.list_backups()})
+
+    async def _api_backup_create(self):
+        body = await request.json(default={})
+        label = body.get("label", "snapshot") if isinstance(body, dict) else "snapshot"
+        try:
+            return json_response({"status": "ok", "backup": self.backups.create_snapshot(label)})
+        except BackupError as exc:
+            return error_response(str(exc), status_code=400)
+
+    async def _api_backup_restore(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict) or body.get("confirm") != "RESTORE":
+            return error_response("需要 confirm=RESTORE 才能恢复备份", status_code=400)
+        try:
+            result = self.backups.restore_snapshot(body.get("name"))
+            self._load_index()
+            return json_response({"status": "ok", **result})
+        except BackupError as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception as exc:
+            logger.error(f"[{PLUGIN_NAME}] 恢复备份后刷新索引失败: {exc}")
+            return error_response("备份已恢复但刷新索引失败", status_code=500)
+
+    async def _api_backup_delete(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict) or body.get("confirm") != "DELETE":
+            return error_response("需要 confirm=DELETE 才能删除备份", status_code=400)
+        try:
+            self.backups.delete_backup(body.get("name"))
+            return json_response({"status": "ok"})
+        except BackupError as exc:
+            return error_response(str(exc), status_code=400)
+
     async def _api_get_config(self):
         emb_providers = []
         for p in self.context.get_all_embedding_providers():
@@ -721,6 +787,7 @@ class MemesPlugin(Star):
             "max_file_bytes": self.config.get(
                 "max_file_bytes", 20 * 1024 * 1024
             ),
+            "backup_retention_count": self.config.get("backup_retention_count", 20),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),
