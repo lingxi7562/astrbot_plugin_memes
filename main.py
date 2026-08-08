@@ -8,6 +8,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
+from .backend.selector import MemeSelector, SelectionSettings
 from .backend.thumbnails import ThumbnailManager, render_pillow_thumbnail
 from .backend.tool import SendMemeTool
 from .web_validation import (
@@ -29,6 +30,7 @@ class MemesPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self.selector = MemeSelector()
         self._thumbnails = ThumbnailManager(
             render_pillow_thumbnail,
             cache_capacity=_THUMB_CACHE_LIMIT,
@@ -179,6 +181,13 @@ class MemesPlugin(Star):
 
         max_candidates = config.get("max_match_candidates", 10)
         min_score = config.get("min_tag_score", 0.0)
+        self.selection_settings = SelectionSettings.safe(
+            mode=config.get("selection_mode", "weighted"),
+            pool_size=config.get("selection_pool_size", 5),
+            cooldown_seconds=config.get("selection_cooldown_seconds", 300.0),
+            history_size=config.get("selection_history_size", 20),
+            deduplicate_files=config.get("deduplicate_files", True),
+        )
         SendMemeTool.configure(
             self.matcher,
             self.index,
@@ -186,6 +195,8 @@ class MemesPlugin(Star):
             min_score,
             match_mode=match_mode,
             embedding_fallback=config.get("embedding_fallback", True),
+            selector=self.selector,
+            selection_settings=self.selection_settings,
         )
         self.context.add_llm_tools(SendMemeTool())
 
@@ -230,6 +241,12 @@ class MemesPlugin(Star):
             self._api_sources,
             ["GET"],
             "获取模板来源健康报告",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/selection",
+            self._api_selection,
+            ["GET"],
+            "获取表情包选择策略状态",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -390,6 +407,20 @@ class MemesPlugin(Star):
     async def _api_sources(self):
         return json_response(self.index.get_status_report())
 
+    async def _api_selection(self):
+        return json_response(
+            {
+                "settings": {
+                    "mode": self.selection_settings.mode,
+                    "pool_size": self.selection_settings.pool_size,
+                    "cooldown_seconds": self.selection_settings.cooldown_seconds,
+                    "history_size": self.selection_settings.history_size,
+                    "deduplicate_files": self.selection_settings.deduplicate_files,
+                },
+                "status": self.selector.status(),
+            }
+        )
+
     async def _api_get_config(self):
         emb_providers = []
         for p in self.context.get_all_embedding_providers():
@@ -401,6 +432,13 @@ class MemesPlugin(Star):
             "embedding_fallback": self.config.get("embedding_fallback", True),
             "max_match_candidates": self.config.get("max_match_candidates", 10),
             "min_tag_score": self.config.get("min_tag_score", 0.0),
+            "selection_mode": self.config.get("selection_mode", "weighted"),
+            "selection_pool_size": self.config.get("selection_pool_size", 5),
+            "selection_cooldown_seconds": self.config.get(
+                "selection_cooldown_seconds", 300.0
+            ),
+            "selection_history_size": self.config.get("selection_history_size", 20),
+            "deduplicate_files": self.config.get("deduplicate_files", True),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),
@@ -454,4 +492,5 @@ class MemesPlugin(Star):
         return await self._thumbnails.get_thumbnail(img_id, img_path, size)
 
     async def terminate(self) -> None:
+        self.selector.clear()
         await self._thumbnails.close()

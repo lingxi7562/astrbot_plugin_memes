@@ -16,12 +16,18 @@ CONFIG_KEYS = frozenset(
         "embedding_fallback",
         "max_match_candidates",
         "min_tag_score",
+        "selection_mode",
+        "selection_pool_size",
+        "selection_cooldown_seconds",
+        "selection_history_size",
+        "deduplicate_files",
         "auto_refresh",
         "thumbnail_size",
         "library_sources",
     }
 )
 MATCH_MODES = frozenset({"keyword", "embedding", "hybrid"})
+SELECTION_MODES = frozenset({"weighted", "top", "random"})
 LIST_SORTS = frozenset(
     {
         "id",
@@ -103,6 +109,20 @@ def validate_config_payload(
             validated[key] = _validate_int(value, key, 1, 100)
         elif key == "min_tag_score":
             validated[key] = _validate_number(value, key, 0.0, 100.0)
+        elif key == "selection_mode":
+            if not isinstance(value, str) or value not in SELECTION_MODES:
+                raise ValidationError("selection_mode 无效")
+            validated[key] = value
+        elif key == "selection_pool_size":
+            validated[key] = _validate_int(value, key, 1, 100)
+        elif key == "selection_cooldown_seconds":
+            validated[key] = _validate_number(value, key, 0.0, 30 * 24 * 3600.0)
+        elif key == "selection_history_size":
+            validated[key] = _validate_int(value, key, 1, 1000)
+        elif key == "deduplicate_files":
+            if not isinstance(value, bool):
+                raise ValidationError(f"{key} 必须是布尔值")
+            validated[key] = value
         elif key == "thumbnail_size":
             validated[key] = _validate_int(value, key, 50, 400)
         elif key == "library_sources":

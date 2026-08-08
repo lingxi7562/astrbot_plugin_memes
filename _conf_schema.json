@@ -95,6 +95,37 @@
     "hint": "低于此分数的候选不被考虑，0表示不限制",
     "default": 0.0
   },
+  "selection_mode": {
+    "description": "模板选择策略",
+    "type": "string",
+    "hint": "weighted: 按分数加权随机选择；top: 每次取最高分；random: 在候选池中随机选择",
+    "options": ["weighted", "top", "random"],
+    "default": "weighted"
+  },
+  "selection_pool_size": {
+    "description": "探索候选池大小",
+    "type": "int",
+    "hint": "从前 N 个高分候选中进行智能选择",
+    "default": 5
+  },
+  "selection_cooldown_seconds": {
+    "description": "会话冷却秒数",
+    "type": "float",
+    "hint": "同一 UMO 在此时间内尽量不重复发送同一张图",
+    "default": 300.0
+  },
+  "selection_history_size": {
+    "description": "每个会话最近记录数",
+    "type": "int",
+    "hint": "限制内存中的最近发送记录，防止无限增大",
+    "default": 20
+  },
+  "deduplicate_files": {
+    "description": "启用图片内容去重",
+    "type": "bool",
+    "hint": "候选中的相同文件内容只保留一张，按文件内容摘要判断",
+    "default": true
+  },
   "auto_refresh": {
     "description": "启动时自动加载索引",
     "type": "bool",

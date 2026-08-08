@@ -18,6 +18,11 @@ class ConfigValidationTests(unittest.TestCase):
             "embedding_fallback": False,
             "max_match_candidates": 25,
             "min_tag_score": 2.5,
+            "selection_mode": "weighted",
+            "selection_pool_size": 5,
+            "selection_cooldown_seconds": 120.0,
+            "selection_history_size": 20,
+            "deduplicate_files": True,
             "auto_refresh": True,
             "thumbnail_size": 240,
         }
@@ -48,6 +53,11 @@ class ConfigValidationTests(unittest.TestCase):
             {"min_tag_score": math.inf},
             {"min_tag_score": -0.1},
             {"thumbnail_size": 49},
+            {"selection_mode": "invalid"},
+            {"selection_pool_size": 0},
+            {"selection_cooldown_seconds": math.inf},
+            {"selection_history_size": 1001},
+            {"deduplicate_files": 1},
             {"unexpected": "value"},
         )
         for payload in invalid_payloads:

@@ -9,6 +9,8 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
+from .selector import MemeSelector, SelectionSettings
+
 
 @dataclass
 class SendMemeTool(FunctionTool[AstrAgentContext]):
@@ -55,6 +57,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
     _min_score: float = 0.0
     _match_mode: str = "keyword"
     _embedding_fallback: bool = True
+    _selector: MemeSelector | None = None
+    _selection_settings: SelectionSettings = SelectionSettings()
 
     @classmethod
     def configure(
@@ -65,6 +69,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         min_score: float = 0.0,
         match_mode: str = "keyword",
         embedding_fallback: bool = True,
+        selector: MemeSelector | None = None,
+        selection_settings: SelectionSettings | None = None,
     ):
         cls._matcher = matcher
         cls._index = index
@@ -72,14 +78,23 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         cls._min_score = min_score
         cls._match_mode = match_mode
         cls._embedding_fallback = embedding_fallback
+        cls._selector = selector
+        cls._selection_settings = selection_settings or SelectionSettings()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        tags: list[str] = kwargs.get("tags", [])
-        scene: str = kwargs.get("scene", "")
-        if scene:
-            tags.append(scene)
+        raw_tags = kwargs.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raw_tags = []
+        tags = [
+            value.strip()
+            for value in raw_tags
+            if isinstance(value, str) and value.strip() and len(value.strip()) <= 128
+        ][:16]
+        scene = kwargs.get("scene", "")
+        if isinstance(scene, str) and scene.strip():
+            tags.append(scene.strip()[:512])
         if not tags:
             return ToolExecResult(
                 content=[{"type": "text", "text": "请提供至少一个表情包标签。"}]
@@ -127,33 +142,47 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 ]
             )
 
-        best = matches[0]
+        valid_matches = []
+        for candidate in matches:
+            path_value = candidate.get("path")
+            if isinstance(path_value, str) and path_value and Path(path_value).is_file():
+                valid_matches.append(candidate)
+        if not valid_matches:
+            return ToolExecResult(
+                content=[
+                    {
+                        "type": "text",
+                        "text": "匹配到的表情包文件已不存在，请先刷新模板库。",
+                    }
+                ]
+            )
+
+        event = context.context.event
+        scope = self._event_scope(event)
+        selector = SendMemeTool._selector
+        if selector is not None:
+            best = selector.choose(
+                valid_matches,
+                scope=scope,
+                settings=SendMemeTool._selection_settings,
+            )
+        else:
+            best = valid_matches[0]
+        if best is None:
+            return ToolExecResult(
+                content=[{"type": "text", "text": "暂时没有可发送的表情包。"}]
+            )
         img_path = Path(best["path"])
-        if not img_path.is_file():
-            for candidate in matches[1:]:
-                alt = Path(candidate["path"])
-                if alt.is_file():
-                    best = candidate
-                    img_path = alt
-                    break
-            else:
-                return ToolExecResult(
-                    content=[
-                        {
-                            "type": "text",
-                            "text": f"表情包文件不存在: {best['filename']}",
-                        }
-                    ]
-                )
 
         try:
-            event = context.context.event
             await event.send(event.chain_result([Image.fromFileSystem(str(img_path))]))
             logger.info(
                 f"[astrbot_plugin_memes] 发送表情包: {best['filename']} "
                 f"(标签: {', '.join(best['matched_tags'])})"
             )
         except Exception as e:
+            if selector is not None:
+                selector.release(best, scope=scope)
             logger.error(f"[astrbot_plugin_memes] 发送表情包失败: {e}")
             return ToolExecResult(
                 content=[{"type": "text", "text": f"发送表情包时出错: {e}"}]
@@ -170,3 +199,16 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 }
             ]
         )
+
+    @staticmethod
+    def _event_scope(event: object) -> str:
+        for attribute in ("unified_msg_origin", "session_id"):
+            try:
+                value = getattr(event, attribute, None)
+                if callable(value):
+                    value = value()
+                if isinstance(value, str) and value.strip():
+                    return value.strip()[:512]
+            except Exception:
+                continue
+        return "global"
