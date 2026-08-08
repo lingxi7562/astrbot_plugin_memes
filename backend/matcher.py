@@ -88,22 +88,20 @@ class TagMatcher:
         self,
         query_tags: list[str],
         limit: int = 10,
+        min_score: float = -1.0,
     ) -> list[dict[str, Any]]:
         if self.embedder is None or not self.embedder.ready:
             return []
-
-        coarse_limit = max(limit * 3, 30)
-        keyword_results = self.match(query_tags, coarse_limit, min_score=0.0)
-        if not keyword_results:
+        try:
+            ranked = await self.embedder.rank_all(
+                query_tags,
+                limit=limit,
+                min_score=min_score,
+            )
+        except Exception:
             return []
-
-        ranked = await self.embedder.rank(keyword_results, query_tags)
         results: list[dict[str, Any]] = []
         for img_id, score in ranked:
-            if len(results) >= limit:
-                break
-            if score <= 0.0:
-                continue
             item = self.index.images.get(img_id)
             if item is None:
                 continue
@@ -118,39 +116,66 @@ class TagMatcher:
     ) -> list[dict[str, Any]]:
         if self.embedder is None or not self.embedder.ready:
             return self.match(query_tags, limit, min_score)
-
-        coarse_limit = max(limit * 3, 30)
-        keyword_results = self.match(query_tags, coarse_limit, min_score)
-        if not keyword_results:
+        try:
+            semantic_rank = await self.embedder.rank_all(
+                query_tags,
+                limit=0,
+                min_score=-1.0,
+            )
+        except Exception:
             return []
 
-        ranked = await self.embedder.rank(keyword_results, query_tags)
-        keyword_by_id = {r["id"]: r for r in keyword_results}
+        # Keyword evidence is optional in hybrid mode: semantic-only matches
+        # must remain visible when no tag shares a lexical token with the query.
+        keyword_results = self.match(query_tags, limit=0, min_score=0.0)
+        keyword_by_id = {result["id"]: result for result in keyword_results}
+        max_keyword = max(
+            (float(result.get("score", 0.0)) for result in keyword_results),
+            default=0.0,
+        )
+        semantic_by_id = dict(semantic_rank)
+        all_ids = set(semantic_by_id) | set(keyword_by_id)
+        ranked: list[tuple[str, float]] = []
+        for img_id in all_ids:
+            semantic_score = semantic_by_id.get(img_id, -1.0)
+            semantic_normalised = max(0.0, min(1.0, (semantic_score + 1.0) / 2.0))
+            keyword_score = float(keyword_by_id.get(img_id, {}).get("score", 0.0))
+            keyword_normalised = keyword_score / max_keyword if max_keyword > 0 else 0.0
+            combined = 0.65 * semantic_normalised + 0.35 * keyword_normalised
+            ranked.append((img_id, combined))
+        ranked.sort(key=lambda row: (-row[1], row[0]))
         results: list[dict[str, Any]] = []
         for img_id, score in ranked:
             if len(results) >= limit:
                 break
-            if score <= 0.0:
-                continue
-            kw = keyword_by_id.get(img_id)
-            if kw is None:
+            if score < min_score:
                 continue
             item = self.index.images.get(img_id)
             if item is None:
                 continue
-            results.append(
-                self._enrich_result(img_id, item, score, kw.get("matched_tags", []))
-            )
+            keyword_match = keyword_by_id.get(img_id, {})
+            results.append(self._enrich_result(
+                img_id,
+                item,
+                score,
+                keyword_match.get("matched_tags", []),
+            ))
         return results
 
     def _enrich_result(
         self, img_id: str, item: dict[str, Any], score: float, matched_tags: list[str]
     ) -> dict[str, Any]:
+        try:
+            path = str(self.index.get_abs_path(item))
+        except Exception:
+            # A source can disappear or be replaced between index refreshes;
+            # never turn a single stale item into a failed whole-library query.
+            path = ""
         return {
             "id": img_id,
             "filename": item.get("filename", ""),
             "rel_path": item.get("rel_path", ""),
-            "path": str(self.index.get_abs_path(item)),
+            "path": path,
             "tags": item.get("tags", []),
             "score": round(score, 2),
             "matched_tags": matched_tags,

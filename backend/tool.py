@@ -101,7 +101,11 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
 
         matches: list = []
         if match_mode == "embedding":
-            matches = await matcher.match_embedding(tags, limit=limit)
+            matches = await matcher.match_embedding(
+                tags,
+                limit=limit,
+                min_score=min_score,
+            )
             if not matches and do_fallback:
                 matches = matcher.match(tags, limit=limit, min_score=min_score)
         elif match_mode == "hybrid":

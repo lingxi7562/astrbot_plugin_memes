@@ -161,7 +161,11 @@ class MemesPlugin(Star):
                 emb_provider = emb_providers[0]
 
             if emb_provider is not None:
-                self.embedder = MemeEmbedder(self.index, emb_provider)
+                self.embedder = MemeEmbedder(
+                    self.index,
+                    emb_provider,
+                    cache_path=managed_root.parent / "embedding_cache.json",
+                )
                 self.matcher.set_embedder(self.embedder)
                 logger.info(
                     f"[{PLUGIN_NAME}] 已绑定 Embedding Provider，匹配模式: {match_mode}"
@@ -401,6 +405,9 @@ class MemesPlugin(Star):
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),
             "embedder_status": "on" if self.embedder is not None else "off",
+            "embedding_cache": (
+                self.embedder.cache_status if self.embedder is not None else None
+            ),
             "available_embedding_providers": emb_providers,
         })
 
