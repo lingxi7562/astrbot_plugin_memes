@@ -12,6 +12,77 @@
     "hint": "用于拼接 rel_path 得到图片绝对路径",
     "default": "/AstrBot/data/plugin_data/astrbot_plugin_smart_imagechat_hub/"
   },
+  "library_sources": {
+    "description": "额外模板库来源",
+    "type": "template_list",
+    "hint": "最多 32 个来源；路径必须为绝对路径。禁用的来源会保留配置但不会加载。",
+    "default": [],
+    "templates": {
+      "json": {
+        "name": "JSON 索引来源",
+        "hint": "加载兼容 images 字段的 JSON 索引，并从数据根目录解析 rel_path。",
+        "display_item": "namespace",
+        "hide_hint_in_list": true,
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "namespace": {
+            "description": "来源命名空间",
+            "type": "string",
+            "hint": "用于生成唯一图片 ID，仅可使用字母、数字、点、下划线和连字符。",
+            "default": "json-library"
+          },
+          "index_path": {
+            "description": "JSON 索引绝对路径",
+            "type": "string",
+            "default": ""
+          },
+          "data_root": {
+            "description": "图片数据根目录绝对路径",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "directory": {
+        "name": "目录扫描来源",
+        "hint": "扫描目录中的常见图片文件，目录名和文件名会自动成为标签。",
+        "display_item": "namespace",
+        "hide_hint_in_list": true,
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "namespace": {
+            "description": "来源命名空间",
+            "type": "string",
+            "hint": "每个来源必须唯一；managed 和 legacy 为保留名称。",
+            "default": "directory-library"
+          },
+          "root": {
+            "description": "图片目录绝对路径",
+            "type": "string",
+            "default": ""
+          },
+          "recursive": {
+            "description": "递归扫描子目录",
+            "type": "bool",
+            "default": true
+          },
+          "tags": {
+            "description": "应用到此来源全部图片的标签",
+            "type": "list",
+            "default": []
+          }
+        }
+      }
+    }
+  },
   "max_match_candidates": {
     "description": "关键词匹配候选上限",
     "type": "int",
@@ -23,6 +94,153 @@
     "type": "float",
     "hint": "低于此分数的候选不被考虑，0表示不限制",
     "default": 0.0
+  },
+  "selection_mode": {
+    "description": "模板选择策略",
+    "type": "string",
+    "hint": "weighted: 按分数加权随机选择；top: 每次取最高分；random: 在候选池中随机选择",
+    "options": ["weighted", "top", "random"],
+    "default": "weighted"
+  },
+  "selection_pool_size": {
+    "description": "探索候选池大小",
+    "type": "int",
+    "hint": "从前 N 个高分候选中进行智能选择",
+    "default": 5
+  },
+  "selection_cooldown_seconds": {
+    "description": "会话冷却秒数",
+    "type": "float",
+    "hint": "同一 UMO 在此时间内尽量不重复发送同一张图",
+    "default": 300.0
+  },
+  "selection_history_size": {
+    "description": "每个会话最近记录数",
+    "type": "int",
+    "hint": "限制内存中的最近发送记录，防止无限增大",
+    "default": 20
+  },
+  "deduplicate_files": {
+    "description": "启用图片内容去重",
+    "type": "bool",
+    "hint": "候选中的相同文件内容只保留一张，按文件内容摘要判断",
+    "default": true
+  },
+  "analytics_enabled": {
+    "description": "启用发送分析与反馈学习",
+    "type": "bool",
+    "hint": "保存有界的聚合统计；会话标识会先哈希，不记录聊天原文",
+    "default": true
+  },
+  "analytics_retention_days": {
+    "description": "分析数据保留天数",
+    "type": "int",
+    "hint": "超过保留期的会话偏好与事件会自动清理",
+    "default": 30
+  },
+  "personalization_strength": {
+    "description": "个性化排序强度",
+    "type": "float",
+    "hint": "根据反馈调整候选权重，0 表示关闭个性化",
+    "default": 0.5
+  },
+  "meme_packs": {
+    "description": "表情包包路由规则",
+    "type": "list",
+    "hint": "每项可按 namespace、包含标签或排除标签筛选，最多 32 个包",
+    "default": []
+  },
+  "default_pack": {
+    "description": "默认表情包包",
+    "type": "string",
+    "hint": "不指定 persona 时优先使用的 pack ID；留空则按会话稳定分配",
+    "default": ""
+  },
+  "persona_packs": {
+    "description": "人格到表情包包映射",
+    "type": "object",
+    "hint": "例如 {\"严肃\":\"formal\",\"搞怪\":\"fun\"}",
+    "default": {},
+    "items": {}
+  },
+  "sticky_sessions": {
+    "description": "启用会话稳定路由",
+    "type": "bool",
+    "hint": "同一会话在未显式指定 pack 时保持同一包，避免风格漂移",
+    "default": true
+  },
+  "policy_enabled": {
+    "description": "启用发送权限与内容策略",
+    "type": "bool",
+    "hint": "关闭后不执行配额与黑白名单过滤",
+    "default": true
+  },
+  "quota_window_seconds": {
+    "description": "会话配额时间窗(秒)",
+    "type": "float",
+    "hint": "同一会话在时间窗内最多发送 quota_max_sends 张",
+    "default": 60.0
+  },
+  "quota_max_sends": {
+    "description": "会话配额上限",
+    "type": "int",
+    "hint": "限制单个会话在时间窗内的发送次数",
+    "default": 8
+  },
+  "blocked_tags": {
+    "description": "禁止的标签",
+    "type": "list",
+    "hint": "命中这些查询或图片标签时不发送",
+    "default": []
+  },
+  "allowed_tags": {
+    "description": "允许的标签",
+    "type": "list",
+    "hint": "非空时仅发送至少命中一个标签的图片",
+    "default": []
+  },
+  "blocked_namespaces": {
+    "description": "禁止的来源命名空间",
+    "type": "list",
+    "hint": "例如 [\"legacy\"] 可屏蔽旧来源",
+    "default": []
+  },
+  "blocked_ids": {
+    "description": "禁止发送的图片 ID",
+    "type": "list",
+    "hint": "用于下架单张图片，最多 256 项",
+    "default": []
+  },
+  "max_file_bytes": {
+    "description": "单张图片大小上限",
+    "type": "int",
+    "hint": "发送前检查文件大小，范围 1 KiB 至 100 MiB",
+    "default": 20971520
+  },
+  "send_mode": {
+    "description": "图片发送管线模式",
+    "type": "string",
+    "hint": "auto 优先使用消息链；chain 或 image_result 可用于兼容特定平台",
+    "options": ["auto", "chain", "image_result"],
+    "default": "auto"
+  },
+  "send_timeout_seconds": {
+    "description": "单次图片发送超时秒数",
+    "type": "float",
+    "hint": "发送等待时间限制为 1 至 120 秒",
+    "default": 30.0
+  },
+  "send_retry_count": {
+    "description": "图片发送失败重试次数",
+    "type": "int",
+    "hint": "每次重试可能再次投递，范围为 0 至 2",
+    "default": 0
+  },
+  "backup_retention_count": {
+    "description": "备份保留份数",
+    "type": "int",
+    "hint": "最多保留 20 份最近备份，恢复前会自动创建恢复点",
+    "default": 20
   },
   "auto_refresh": {
     "description": "启动时自动加载索引",

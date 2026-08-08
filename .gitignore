@@ -1,4 +1,17 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+*.log
+*.tmp
+.tmp/
+tmp/
 .DS_Store
 *.egg-info/

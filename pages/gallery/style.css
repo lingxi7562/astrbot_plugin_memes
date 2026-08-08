@@ -281,6 +281,32 @@ body {
   flex: 1;
 }
 
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.card-action {
+  padding: 4px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.card-action:hover {
+  color: var(--tag-text);
+  border-color: var(--tag-text);
+}
+
+.card-action-danger:hover {
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
 .filename {
   font-size: 12px;
   color: var(--text);
@@ -444,6 +470,41 @@ body {
   color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-feedback {
+  position: absolute;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feedback-btn {
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.feedback-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.8);
+}
+
+.feedback-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.feedback-status {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* ── Settings Button ── */

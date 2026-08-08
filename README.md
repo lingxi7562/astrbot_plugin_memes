@@ -10,9 +10,30 @@
 
 - **关键词匹配**（默认）— 看标签里有没有你提到的词，比如搜"猫"就找带有"猫"标签的图
 - **向量匹配** — 用 AI 理解你说的意思，就算用词不一样也能找到感觉对的表情包
-- **混合模式** — 先用关键词筛一批，再用向量挑最合适的
+- **混合模式** — 对全库做语义召回，再与关键词证据融合排序；没有词面命中时也不会漏掉语义结果
 
-标签不用自己打，直接复用了 `smart_imagechat_hub` 里 AI 生成好的标签，396 张图，607 个标签。
+向量模式会为整个当前模板库建立持久化缓存，缓存位于插件数据目录的
+`embedding_cache.json`。缓存按 Provider 身份、向量维度和每个条目的标签/文件名指纹校验；模型或模板库变化时只重算缺失条目，写入采用同目录原子替换。
+
+模板库可以直接使用插件自己的管理目录，也可以组合多个 JSON 索引或图片目录。目录来源会根据文件夹和文件名自动生成标签，JSON 来源则复用索引中已有的标签。
+
+## 多来源模板库
+
+插件启动时会自动创建并扫描：
+
+```text
+data/plugin_data/astrbot_plugin_memes/library/
+```
+
+把 PNG、JPEG、GIF、WebP 等常见图片放进去即可使用；子目录名和文件名会参与标签匹配。这个 `managed` 来源始终启用，插件更新或重装时不会覆盖其中的数据。
+
+还可以在 AstrBot 插件配置的 **额外模板库来源** 中添加至多 32 个来源：
+
+- **JSON 索引来源**：填写索引文件、图片数据根目录、唯一命名空间，可兼容现有 `images` 索引格式。
+- **目录扫描来源**：填写图片根目录、唯一命名空间，可选择是否递归，并可给整个来源附加标签。
+- 每项都可单独禁用；路径必须是绝对路径，命名空间只允许字母、数字、点、下划线和连字符。
+
+来源加载采用原子刷新：任一已启用来源校验失败时，继续保留上一次成功加载的库。只读 `GET /astrbot_plugin_memes/sources` 接口可查看各来源状态、缺失文件与汇总计数。
 
 ## LLM 能调的 Tool
 
@@ -20,12 +41,17 @@
 
 ```
 send_meme(tags=["开心", "猫"], scene="打招呼")
+# 也可以显式指定表情包包或人格
+send_meme(tags=["吐槽"], pack="fun")
+send_meme(tags=["回复"], persona="严肃")
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `tags` | 字符串列表 | ✓ | 想表达的情绪、内容，比如 `["生气","二次元","怼人"]` |
 | `scene` | 字符串 | ✗ | 补充的场景描述，比如 `"刚睡醒"`、`"下班了"`，会自动追加到 tags 里 |
+| `pack` | 字符串 | ✗ | 指定配置的表情包包 ID；不填则按默认包或会话稳定路由 |
+| `persona` | 字符串 | ✗ | 指定人格别名，映射到 `persona_packs` 中的表情包包 |
 
 调用后插件会按你选的匹配模式找个最合适的表情包发到当前对话，同时告诉 LLM 发了什么——这样 LLM 知道自己干了什么，回复会更自然。
 
@@ -36,6 +62,17 @@ send_meme(tags=["开心", "猫"], scene="打招呼")
 1. 在 AstrBot 里配一个 Embedding Provider（OpenAI、SiliconFlow 等都行）
 2. 打开表情包管理页面，点右上角 **设置**，把匹配模式换成 `embedding` 或 `hybrid`
 3. 保存后重载插件
+
+首次使用向量或混合模式时会按需建立全库索引。Provider 暂时不可用时，插件不会写入半成品缓存，并可按配置回退到关键词匹配。
+
+## 聊天命令
+
+插件还注册了 `/meme` 命令组：
+
+- `/meme search 关键词` 只搜索并返回候选文件名
+- `/meme send 关键词` 搜索并发送一张图片（仍经过冷却、配额和内容策略）
+- `/meme list [标签]` 查看标签或筛选结果
+- `/meme refresh` 刷新索引，`/meme stats` 查看聚合统计
 
 ## WebUI 能干嘛
 
@@ -56,8 +93,28 @@ send_meme(tags=["开心", "猫"], scene="打招呼")
 - **向量失败回退** — 开了的话向量不灵就自动换关键词
 - **候选数量** — 每次最多挑多少张
 - **最低分数** — 低于这个分数的不要
+- **选择策略** — `weighted` 按分数加权随机、`top` 取最高分、`random` 在候选池中随机
+- **候选池大小** — 选择策略最多探索前 N 个候选
+- **会话冷却与历史** — 按 UMO 会话记录最近发送，尽量避免短时间重复
+- **图片内容去重** — 相同文件内容只保留一张；单个文件超过 100 MB 时不读取其内容摘要
+- **发送分析与反馈学习** — WebUI 预览时可标记“有用/不合适”，后续同一会话会适度调整候选排序
+- **数据保留与隐私** — 分析只保存有界聚合计数和哈希化会话标识，不保存聊天原文；可关闭或设置 1–365 天保留期
 - **标签同义词** — 比如把"哈哈"和"大笑"当一回事
 - **缩略图尺寸** — 预览图的大小
+- **额外模板库来源** — 组合 JSON 索引与目录扫描来源，可逐项启用、设置命名空间和来源标签
+- **表情包包与人格路由** — 使用 `meme_packs` 按来源命名空间/标签组织风格，`persona_packs` 将人格别名映射到包；`GET /astrbot_plugin_memes/routing` 可查看路由状态
+- **权限与内容治理** — `quota_*` 限制单会话发送频率，`blocked_*`/`allowed_tags` 控制内容，`max_file_bytes` 防止异常大文件；`GET /astrbot_plugin_memes/policy` 可查看聚合状态
+- **图库管理** — `POST /astrbot_plugin_memes/library/import` 接受受限 Base64 图片导入，`library/tags` 更新 managed 标签，`library/delete` 与 `library/batch` 支持安全删除和批量操作；外部来源只读
+- **备份与恢复** — `backups`、`backup/create`、`backup/restore`、`backup/delete` 提供带 SHA-256 清单的 managed 快照；恢复前自动保留恢复点，解压路径和总大小都会校验
+- **兼容发送管线** — `send_mode` 支持自动选择消息链或 `image_result`，并可配置超时与最多两次重试；`GET /astrbot_plugin_memes/pipeline` 可查看实际管线状态
+
+发送分析可通过 `GET /astrbot_plugin_memes/analytics` 查看，反馈使用
+`POST /astrbot_plugin_memes/feedback`，请求体为
+`{"id":"managed:...","rating":1}` 或 `rating:-1`。插件会限制事件、来源、图片和标签数量，并使用同目录原子写入 `analytics.json`。
+
+### 旧配置兼容
+
+原有的 `index_path` 与 `data_root` 配置仍受支持：当 `index_path` 指向真实文件时，它会作为 `legacy` 来源与独立模板库一起加载；文件不存在时只记录告警，不会阻止 `managed` 目录加载。因此不再强制依赖 `smart_imagechat_hub`，已有部署也无需立即迁移配置。
 
 ## 文件结构
 
@@ -68,8 +125,14 @@ astrbot_plugin_memes/
 ├── metadata.yaml           # 插件信息
 ├── backend/
 │   ├── index.py            # 读标签索引
+│   ├── library.py          # 多来源加载、校验与健康报告
 │   ├── matcher.py          # 匹配逻辑
 │   ├── embedder.py         # 向量化
+│   ├── selector.py         # 候选去重、冷却与策略选择
+│   ├── analytics.py        # 发送统计、反馈与个性化
+│   ├── catalog.py          # managed 导入、标签元数据与删除
+│   ├── backup.py           # 快照校验、备份与恢复
+│   ├── sender.py           # 兼容多版本事件 API 的发送管线
 │   └── tool.py             # LLM 调用的 tool
 └── pages/gallery/          # 管理页面
 ```
@@ -87,4 +150,4 @@ docker exec astrbot pip install numpy
 docker restart astrbot
 ```
 
-需要 `smart_imagechat_hub` 作为标签数据源，没有的话装一下就行。
+如需继续复用 `smart_imagechat_hub` 的标签索引，保留原来的 `index_path` 和 `data_root` 即可；否则直接使用插件自带的管理目录。
