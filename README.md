@@ -41,12 +41,17 @@ data/plugin_data/astrbot_plugin_memes/library/
 
 ```
 send_meme(tags=["开心", "猫"], scene="打招呼")
+# 也可以显式指定表情包包或人格
+send_meme(tags=["吐槽"], pack="fun")
+send_meme(tags=["回复"], persona="严肃")
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `tags` | 字符串列表 | ✓ | 想表达的情绪、内容，比如 `["生气","二次元","怼人"]` |
 | `scene` | 字符串 | ✗ | 补充的场景描述，比如 `"刚睡醒"`、`"下班了"`，会自动追加到 tags 里 |
+| `pack` | 字符串 | ✗ | 指定配置的表情包包 ID；不填则按默认包或会话稳定路由 |
+| `persona` | 字符串 | ✗ | 指定人格别名，映射到 `persona_packs` 中的表情包包 |
 
 调用后插件会按你选的匹配模式找个最合适的表情包发到当前对话，同时告诉 LLM 发了什么——这样 LLM 知道自己干了什么，回复会更自然。
 
@@ -88,6 +93,7 @@ send_meme(tags=["开心", "猫"], scene="打招呼")
 - **标签同义词** — 比如把"哈哈"和"大笑"当一回事
 - **缩略图尺寸** — 预览图的大小
 - **额外模板库来源** — 组合 JSON 索引与目录扫描来源，可逐项启用、设置命名空间和来源标签
+- **表情包包与人格路由** — 使用 `meme_packs` 按来源命名空间/标签组织风格，`persona_packs` 将人格别名映射到包；`GET /astrbot_plugin_memes/routing` 可查看路由状态
 
 发送分析可通过 `GET /astrbot_plugin_memes/analytics` 查看，反馈使用
 `POST /astrbot_plugin_memes/feedback`，请求体为

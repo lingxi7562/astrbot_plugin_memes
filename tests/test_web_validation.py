@@ -26,6 +26,21 @@ class ConfigValidationTests(unittest.TestCase):
             "analytics_enabled": True,
             "analytics_retention_days": 30,
             "personalization_strength": 0.5,
+            "meme_packs": [
+                {
+                    "id": "fun",
+                    "label": "Fun",
+                    "namespaces": ["managed"],
+                    "include_tags": [],
+                    "exclude_tags": [],
+                    "personas": ["搞怪"],
+                    "weight": 1.0,
+                    "enabled": True,
+                }
+            ],
+            "default_pack": "fun",
+            "persona_packs": {"搞怪": "fun"},
+            "sticky_sessions": True,
             "auto_refresh": True,
             "thumbnail_size": 240,
         }
@@ -64,6 +79,10 @@ class ConfigValidationTests(unittest.TestCase):
             {"analytics_enabled": 1},
             {"analytics_retention_days": 0},
             {"personalization_strength": 2.1},
+            {"meme_packs": [{"id": "BAD ID"}]},
+            {"meme_packs": [{"id": "fun"}, {"id": "fun"}]},
+            {"persona_packs": {"persona": "BAD ID"}},
+            {"sticky_sessions": 1},
             {"unexpected": "value"},
         )
         for payload in invalid_payloads:

@@ -24,6 +24,10 @@ CONFIG_KEYS = frozenset(
         "analytics_enabled",
         "analytics_retention_days",
         "personalization_strength",
+        "meme_packs",
+        "default_pack",
+        "persona_packs",
+        "sticky_sessions",
         "auto_refresh",
         "thumbnail_size",
         "library_sources",
@@ -45,6 +49,7 @@ LIBRARY_SOURCE_TEMPLATES = frozenset({"json", "directory"})
 MAX_LIBRARY_SOURCES = 32
 MAX_SOURCE_TAGS = 64
 _NAMESPACE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_PACK_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}\Z")
 
 
 class ValidationError(ValueError):
@@ -130,12 +135,123 @@ def validate_config_payload(
             validated[key] = _validate_int(value, key, 1, 365)
         elif key == "personalization_strength":
             validated[key] = _validate_number(value, key, 0.0, 2.0)
+        elif key == "meme_packs":
+            validated[key] = parse_meme_packs(value)
+        elif key == "default_pack":
+            if not isinstance(value, str) or len(value.strip()) > 32:
+                raise ValidationError("default_pack 格式无效")
+            parsed = value.strip().casefold()
+            if parsed and not _PACK_ID_PATTERN.fullmatch(parsed):
+                raise ValidationError("default_pack 格式无效")
+            validated[key] = parsed
+        elif key == "persona_packs":
+            validated[key] = parse_persona_packs(value)
+        elif key == "sticky_sessions":
+            if not isinstance(value, bool):
+                raise ValidationError("sticky_sessions 必须是布尔值")
+            validated[key] = value
         elif key == "thumbnail_size":
             validated[key] = _validate_int(value, key, 50, 400)
         elif key == "library_sources":
             validated[key] = parse_library_sources(value)
 
     return validated
+
+
+def _parse_pack_values(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValidationError(f"{field} 必须是至多 32 项的列表")
+    result: list[str] = []
+    seen: set[str] = set()
+    for number, raw in enumerate(value):
+        if not isinstance(raw, str):
+            raise ValidationError(f"{field}[{number}] 必须是字符串")
+        item = " ".join(raw.split()).strip().casefold()
+        if not item or len(item) > 128:
+            raise ValidationError(f"{field}[{number}] 格式无效")
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def parse_meme_packs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValidationError("meme_packs 必须是至多 32 项的列表")
+    allowed = {
+        "id",
+        "label",
+        "namespaces",
+        "include_tags",
+        "exclude_tags",
+        "personas",
+        "weight",
+        "enabled",
+    }
+    parsed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for number, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise ValidationError(f"meme_packs[{number}] 必须是对象")
+        if set(raw) - allowed:
+            raise ValidationError(f"meme_packs[{number}] 包含不支持的字段")
+        pack_id = raw.get("id")
+        if not isinstance(pack_id, str):
+            raise ValidationError(f"meme_packs[{number}].id 必须是字符串")
+        pack_id = pack_id.strip().casefold()
+        if not _PACK_ID_PATTERN.fullmatch(pack_id) or pack_id in seen:
+            raise ValidationError(f"meme_packs[{number}].id 格式无效或重复")
+        seen.add(pack_id)
+        label = raw.get("label", pack_id)
+        if not isinstance(label, str) or len(label.strip()) > 96:
+            raise ValidationError(f"meme_packs[{number}].label 格式无效")
+        weight = raw.get("weight", 1.0)
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise ValidationError(f"meme_packs[{number}].weight 必须是数字")
+        weight = float(weight)
+        if not math.isfinite(weight) or not 0.0 <= weight <= 100.0:
+            raise ValidationError(f"meme_packs[{number}].weight 超出范围")
+        enabled = raw.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValidationError(f"meme_packs[{number}].enabled 必须是布尔值")
+        parsed.append(
+            {
+                "id": pack_id,
+                "label": label.strip() or pack_id,
+                "namespaces": _parse_pack_values(
+                    raw.get("namespaces", []), f"meme_packs[{number}].namespaces"
+                ),
+                "include_tags": _parse_pack_values(
+                    raw.get("include_tags", []), f"meme_packs[{number}].include_tags"
+                ),
+                "exclude_tags": _parse_pack_values(
+                    raw.get("exclude_tags", []), f"meme_packs[{number}].exclude_tags"
+                ),
+                "personas": _parse_pack_values(
+                    raw.get("personas", []), f"meme_packs[{number}].personas"
+                )[:16],
+                "weight": weight,
+                "enabled": enabled,
+            }
+        )
+    return parsed
+
+
+def parse_persona_packs(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict) or len(value) > 64:
+        raise ValidationError("persona_packs 必须是至多 64 项的对象")
+    parsed: dict[str, str] = {}
+    for raw_persona, raw_pack in value.items():
+        if (
+            not isinstance(raw_persona, str)
+            or not isinstance(raw_pack, str)
+            or not raw_persona.strip()
+            or len(raw_persona.strip()) > 64
+            or not _PACK_ID_PATTERN.fullmatch(raw_pack.strip().casefold())
+        ):
+            raise ValidationError("persona_packs 包含无效映射")
+        parsed[raw_persona.strip().casefold()] = raw_pack.strip().casefold()
+    return parsed
 
 
 def _validate_source_path(value: Any, field: str) -> str:

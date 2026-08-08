@@ -10,6 +10,7 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .analytics import MemeAnalytics
+from .routing import MemeRouter, RoutingSettings
 from .selector import MemeSelector, SelectionSettings
 
 
@@ -47,6 +48,14 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                         "用于辅助更精准地匹配表情包。"
                     ),
                 },
+                "pack": {
+                    "type": "string",
+                    "description": "可选的表情包包 ID；不填则按会话路由",
+                },
+                "persona": {
+                    "type": "string",
+                    "description": "可选的人格别名，会映射到预设表情包包",
+                },
             },
             "required": ["tags"],
         }
@@ -61,6 +70,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
     _selector: MemeSelector | None = None
     _selection_settings: SelectionSettings = SelectionSettings()
     _analytics: MemeAnalytics | None = None
+    _router: MemeRouter | None = None
+    _routing_settings: RoutingSettings = RoutingSettings()
 
     @classmethod
     def configure(
@@ -74,6 +85,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         selector: MemeSelector | None = None,
         selection_settings: SelectionSettings | None = None,
         analytics: MemeAnalytics | None = None,
+        router: MemeRouter | None = None,
+        routing_settings: RoutingSettings | None = None,
     ):
         cls._matcher = matcher
         cls._index = index
@@ -84,6 +97,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         cls._selector = selector
         cls._selection_settings = selection_settings or SelectionSettings()
         cls._analytics = analytics
+        cls._router = router
+        cls._routing_settings = routing_settings or RoutingSettings()
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -163,6 +178,21 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
 
         event = context.context.event
         scope = self._event_scope(event)
+        pack = kwargs.get("pack", "")
+        if not isinstance(pack, str):
+            pack = ""
+        persona = kwargs.get("persona", "")
+        if not isinstance(persona, str):
+            persona = ""
+        router = SendMemeTool._router
+        route_info = {"pack": "", "fallback": False}
+        if router is not None:
+            valid_matches, route_info = router.route(
+                valid_matches,
+                scope=scope,
+                pack=pack[:64],
+                persona=persona[:64],
+            )
         selector = SendMemeTool._selector
         analytics = SendMemeTool._analytics
         if analytics is not None:
@@ -193,7 +223,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                     logger.warning(f"[astrbot_plugin_memes] 发送分析记录失败: {exc}")
             logger.info(
                 f"[astrbot_plugin_memes] 发送表情包: {best['filename']} "
-                f"(标签: {', '.join(best['matched_tags'])})"
+                f"(标签: {', '.join(best['matched_tags'])}; "
+                f"pack: {route_info.get('pack', '') or 'all'})"
             )
         except Exception as e:
             if selector is not None:

@@ -144,6 +144,31 @@
     "hint": "根据反馈调整候选权重，0 表示关闭个性化",
     "default": 0.5
   },
+  "meme_packs": {
+    "description": "表情包包路由规则",
+    "type": "list",
+    "hint": "每项可按 namespace、包含标签或排除标签筛选，最多 32 个包",
+    "default": []
+  },
+  "default_pack": {
+    "description": "默认表情包包",
+    "type": "string",
+    "hint": "不指定 persona 时优先使用的 pack ID；留空则按会话稳定分配",
+    "default": ""
+  },
+  "persona_packs": {
+    "description": "人格到表情包包映射",
+    "type": "object",
+    "hint": "例如 {\"严肃\":\"formal\",\"搞怪\":\"fun\"}",
+    "default": {},
+    "items": {}
+  },
+  "sticky_sessions": {
+    "description": "启用会话稳定路由",
+    "type": "bool",
+    "hint": "同一会话在未显式指定 pack 时保持同一包，避免风格漂移",
+    "default": true
+  },
   "auto_refresh": {
     "description": "启动时自动加载索引",
     "type": "bool",

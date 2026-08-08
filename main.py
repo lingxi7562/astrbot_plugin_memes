@@ -9,6 +9,7 @@ from .backend.analytics import AnalyticsSettings, MemeAnalytics
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
+from .backend.routing import MemeRouter, RoutingSettings
 from .backend.selector import MemeSelector, SelectionSettings
 from .backend.thumbnails import ThumbnailManager, render_pillow_thumbnail
 from .backend.tool import SendMemeTool
@@ -46,6 +47,13 @@ class MemesPlugin(Star):
             / "library"
         )
         managed_root.mkdir(parents=True, exist_ok=True)
+        self.routing_settings = RoutingSettings.safe(
+            packs=config.get("meme_packs", []),
+            default_pack=config.get("default_pack", ""),
+            persona_packs=config.get("persona_packs", {}),
+            sticky_sessions=config.get("sticky_sessions", True),
+        )
+        self.router = MemeRouter(self.routing_settings)
         self.analytics = MemeAnalytics(
             managed_root.parent / "analytics.json",
             AnalyticsSettings.safe(
@@ -209,6 +217,8 @@ class MemesPlugin(Star):
             selector=self.selector,
             selection_settings=self.selection_settings,
             analytics=self.analytics,
+            router=self.router,
+            routing_settings=self.routing_settings,
         )
         self.context.add_llm_tools(SendMemeTool())
 
@@ -277,6 +287,12 @@ class MemesPlugin(Star):
             self._api_analytics_reset,
             ["POST"],
             "清理发送分析数据",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/routing",
+            self._api_routing,
+            ["GET"],
+            "获取表情包包与人格路由状态",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -490,6 +506,9 @@ class MemesPlugin(Star):
             return error_response("清理统计失败", status_code=500)
         return json_response({"status": "ok"})
 
+    async def _api_routing(self):
+        return json_response(self.router.status())
+
     async def _api_get_config(self):
         emb_providers = []
         for p in self.context.get_all_embedding_providers():
@@ -515,6 +534,10 @@ class MemesPlugin(Star):
             "personalization_strength": self.config.get(
                 "personalization_strength", 0.5
             ),
+            "meme_packs": self.config.get("meme_packs", []),
+            "default_pack": self.config.get("default_pack", ""),
+            "persona_packs": self.config.get("persona_packs", {}),
+            "sticky_sessions": self.config.get("sticky_sessions", True),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),
             "library_sources": self.config.get("library_sources", []),
@@ -569,4 +592,5 @@ class MemesPlugin(Star):
 
     async def terminate(self) -> None:
         self.selector.clear()
+        self.router.clear()
         await self._thumbnails.close()
