@@ -12,9 +12,11 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .analytics import MemeAnalytics
 from .policy import MemePolicy, PolicySettings
+from .query import build_query_plan
 from .routing import MemeRouter, RoutingSettings
 from .sender import MemeSender, SendPipelineSettings
 from .selector import MemeSelector, SelectionSettings
+from .llm_schema import send_meme_parameters
 
 
 def _tool_result(*, content: list[dict[str, Any]]) -> ToolExecResult:
@@ -63,48 +65,12 @@ class SendMemeRuntime:
 class SendMemeTool(FunctionTool[AstrAgentContext]):
     name: str = "send_meme"
     description: str = (
-        "从表情包库中挑选并发送一张表情包图片到当前对话。"
-        "当回复适合配表情包时调用——比如表达开心、无语、生气等情绪，"
-        "或者回怼、自嘲、吐槽等场景。"
-        "tags 里填入你想传达的情绪和内容关键词，尽量用常见中文词。"
-        "例如对方说了个冷笑话，你可以传 tags=[\"无语\", \"冷笑\"]；"
-        "对方说想你了，传 tags=[\"害羞\", \"想你\", \"可爱\"]。"
-        "scene 是可选的补充说明，帮你描述当前对话氛围。"
+        "发送一张最合适的表情包。通常只需调用一次并填写 intent："
+        "用一句短话描述想表达的感觉或回应，例如‘对方讲冷笑话，我想无语吐槽’。"
+        "插件会自动完成匹配、路由、去重、策略检查和发送；成功后不要再次调用。"
+        "tags、scene、pack、persona 仅为兼容或高级选项，通常留空。"
     )
-    parameters: dict = Field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "表情包标签，描述你想传递的情绪或内容。"
-                        "例如 [\"开心\", \"祝贺\", \"比心\"]；"
-                        "例如 [\"生气\", \"怼人\", \"你这瓜保熟吗\"]。"
-                        "尽量用简短的中文词，1-4 个标签即可。"
-                    ),
-                },
-                "scene": {
-                    "type": "string",
-                    "description": (
-                        "可选，对话场景或情绪的补充描述。"
-                        "例如 \"对方在撒娇\"、\"刚才讲了个冷笑话\"、\"收到表扬很开心\"。"
-                        "用于辅助更精准地匹配表情包。"
-                    ),
-                },
-                "pack": {
-                    "type": "string",
-                    "description": "可选的表情包包 ID；不填则按会话路由",
-                },
-                "persona": {
-                    "type": "string",
-                    "description": "可选的人格别名，会映射到预设表情包包",
-                },
-            },
-            "required": ["tags"],
-        }
-    )
+    parameters: dict = Field(default_factory=send_meme_parameters)
 
     _matcher: ClassVar[Any] = None
     _index: ClassVar[Any] = None
@@ -197,22 +163,6 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        raw_tags = kwargs.get("tags", [])
-        if not isinstance(raw_tags, list):
-            raw_tags = []
-        tags = [
-            value.strip()
-            for value in raw_tags
-            if isinstance(value, str) and value.strip() and len(value.strip()) <= 128
-        ][:16]
-        scene = kwargs.get("scene", "")
-        if isinstance(scene, str) and scene.strip():
-            tags.append(scene.strip()[:512])
-        if not tags:
-            return _tool_result(
-                content=[{"type": "text", "text": "请提供至少一个表情包标签。"}]
-            )
-
         runtime = self.runtime
         matcher = runtime.matcher if runtime is not None else SendMemeTool._matcher
         index = runtime.index if runtime is not None else SendMemeTool._index
@@ -220,6 +170,32 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
             return _tool_result(
                 content=[
                     {"type": "text", "text": "表情包匹配器未初始化，请联系管理员。"}
+                ]
+            )
+
+        event = context.context.event
+        try:
+            known_tags = index.get_unique_tags()
+        except Exception:
+            known_tags = ()
+        query_plan = build_query_plan(
+            intent=kwargs.get("intent", ""),
+            tags=kwargs.get("tags", ()),
+            scene=kwargs.get("scene", ""),
+            context=self._event_message(event),
+            known_tags=known_tags,
+        )
+        tags = list(query_plan.terms)
+        if query_plan.is_empty:
+            return _tool_result(
+                content=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "未能确定想表达的情绪。下一次只需提供 intent，"
+                            "例如‘开心地打招呼’。"
+                        ),
+                    }
                 ]
             )
 
@@ -275,7 +251,6 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 ]
             )
 
-        event = context.context.event
         scope = self._event_scope(event)
         pack = kwargs.get("pack", "")
         if not isinstance(pack, str):
@@ -370,12 +345,22 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 {
                     "type": "text",
                     "text": (
-                        f"已发送表情包。文件名: {best['filename']}，"
-                        f"匹配标签: {', '.join(best['matched_tags'])}"
+                        f"status=sent\nimage={best['filename']}\n"
+                        "无需再次调用 send_meme。"
                     ),
                 }
             ]
         )
+
+    @staticmethod
+    def _event_message(event: object) -> str:
+        try:
+            value = getattr(event, "message_str", "")
+            if callable(value):
+                value = value()
+            return value if isinstance(value, str) else ""
+        except Exception:
+            return ""
 
     @staticmethod
     def _event_scope(event: object) -> str:
