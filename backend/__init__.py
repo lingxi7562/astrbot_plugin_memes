@@ -22,6 +22,8 @@ __all__ = [
     "RoutingSettings",
     "MemePolicy",
     "PolicySettings",
+    "MemeSender",
+    "SendPipelineSettings",
     "ManagedCatalog",
     "CatalogError",
     "BackupManager",
@@ -62,6 +64,10 @@ def __getattr__(name: str) -> Any:
         from .policy import MemePolicy, PolicySettings
 
         return {"MemePolicy": MemePolicy, "PolicySettings": PolicySettings}[name]
+    if name in {"MemeSender", "SendPipelineSettings"}:
+        from .sender import MemeSender, SendPipelineSettings
+
+        return {"MemeSender": MemeSender, "SendPipelineSettings": SendPipelineSettings}[name]
     if name in {"ManagedCatalog", "CatalogError"}:
         from .catalog import CatalogError, ManagedCatalog
 

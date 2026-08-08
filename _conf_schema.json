@@ -217,6 +217,25 @@
     "hint": "发送前检查文件大小，范围 1 KiB 至 100 MiB",
     "default": 20971520
   },
+  "send_mode": {
+    "description": "图片发送管线模式",
+    "type": "string",
+    "hint": "auto 优先使用消息链；chain 或 image_result 可用于兼容特定平台",
+    "options": ["auto", "chain", "image_result"],
+    "default": "auto"
+  },
+  "send_timeout_seconds": {
+    "description": "单次图片发送超时秒数",
+    "type": "float",
+    "hint": "发送等待时间限制为 1 至 120 秒",
+    "default": 30.0
+  },
+  "send_retry_count": {
+    "description": "图片发送失败重试次数",
+    "type": "int",
+    "hint": "每次重试可能再次投递，范围为 0 至 2",
+    "default": 0
+  },
   "backup_retention_count": {
     "description": "备份保留份数",
     "type": "int",

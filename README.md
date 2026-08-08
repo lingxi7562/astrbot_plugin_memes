@@ -106,6 +106,7 @@ send_meme(tags=["回复"], persona="严肃")
 - **权限与内容治理** — `quota_*` 限制单会话发送频率，`blocked_*`/`allowed_tags` 控制内容，`max_file_bytes` 防止异常大文件；`GET /astrbot_plugin_memes/policy` 可查看聚合状态
 - **图库管理** — `POST /astrbot_plugin_memes/library/import` 接受受限 Base64 图片导入，`library/tags` 更新 managed 标签，`library/delete` 与 `library/batch` 支持安全删除和批量操作；外部来源只读
 - **备份与恢复** — `backups`、`backup/create`、`backup/restore`、`backup/delete` 提供带 SHA-256 清单的 managed 快照；恢复前自动保留恢复点，解压路径和总大小都会校验
+- **兼容发送管线** — `send_mode` 支持自动选择消息链或 `image_result`，并可配置超时与最多两次重试；`GET /astrbot_plugin_memes/pipeline` 可查看实际管线状态
 
 发送分析可通过 `GET /astrbot_plugin_memes/analytics` 查看，反馈使用
 `POST /astrbot_plugin_memes/feedback`，请求体为
@@ -131,6 +132,7 @@ astrbot_plugin_memes/
 │   ├── analytics.py        # 发送统计、反馈与个性化
 │   ├── catalog.py          # managed 导入、标签元数据与删除
 │   ├── backup.py           # 快照校验、备份与恢复
+│   ├── sender.py           # 兼容多版本事件 API 的发送管线
 │   └── tool.py             # LLM 调用的 tool
 └── pages/gallery/          # 管理页面
 ```

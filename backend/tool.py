@@ -1,10 +1,11 @@
 from pathlib import Path
+from dataclasses import dataclass as std_dataclass
+from typing import Any, ClassVar
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from astrbot.api import logger
-from astrbot.api.message_components import Image
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -12,7 +13,50 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from .analytics import MemeAnalytics
 from .policy import MemePolicy, PolicySettings
 from .routing import MemeRouter, RoutingSettings
+from .sender import MemeSender, SendPipelineSettings
 from .selector import MemeSelector, SelectionSettings
+
+
+def _tool_result(*, content: list[dict[str, Any]]) -> ToolExecResult:
+    """Build AstrBot's MCP tool result without assuming a union alias is callable.
+
+    AstrBot exposes ``ToolExecResult`` as ``str | CallToolResult``.  Older plugin
+    code sometimes called that type alias directly, which fails at runtime on
+    current releases.  Keep the import lazy for maintenance tooling and fall
+    back to plain text for runtimes that do not ship MCP types.
+    """
+
+    try:
+        from mcp.types import CallToolResult, TextContent
+
+        blocks = [
+            TextContent(type="text", text=item.get("text", ""))
+            for item in content
+            if isinstance(item, dict)
+        ]
+        return CallToolResult(content=blocks)
+    except Exception:
+        return "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+
+
+@std_dataclass(frozen=True, slots=True)
+class SendMemeRuntime:
+    matcher: Any
+    index: Any
+    max_candidates: int
+    min_score: float
+    match_mode: str
+    embedding_fallback: bool
+    selector: MemeSelector | None
+    selection_settings: SelectionSettings
+    analytics: MemeAnalytics | None
+    router: MemeRouter | None
+    policy: MemePolicy | None
+    sender: MemeSender
 
 
 @dataclass
@@ -62,19 +106,26 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    _matcher = None
-    _index = None
-    _max_candidates: int = 10
-    _min_score: float = 0.0
-    _match_mode: str = "keyword"
-    _embedding_fallback: bool = True
-    _selector: MemeSelector | None = None
-    _selection_settings: SelectionSettings = SelectionSettings()
-    _analytics: MemeAnalytics | None = None
-    _router: MemeRouter | None = None
-    _routing_settings: RoutingSettings = RoutingSettings()
-    _policy: MemePolicy | None = None
-    _policy_settings: PolicySettings = PolicySettings()
+    _matcher: ClassVar[Any] = None
+    _index: ClassVar[Any] = None
+    _max_candidates: ClassVar[int] = 10
+    _min_score: ClassVar[float] = 0.0
+    _match_mode: ClassVar[str] = "keyword"
+    _embedding_fallback: ClassVar[bool] = True
+    _selector: ClassVar[MemeSelector | None] = None
+    _selection_settings: ClassVar[SelectionSettings] = SelectionSettings()
+    _analytics: ClassVar[MemeAnalytics | None] = None
+    _router: ClassVar[MemeRouter | None] = None
+    _routing_settings: ClassVar[RoutingSettings] = RoutingSettings()
+    _policy: ClassVar[MemePolicy | None] = None
+    _policy_settings: ClassVar[PolicySettings] = PolicySettings()
+    _sender: ClassVar[MemeSender | None] = None
+    _pipeline_settings: ClassVar[SendPipelineSettings] = SendPipelineSettings()
+    # AstrBot's pydantic dataclass must not generate a schema for runtime-only
+    # objects (MemeSelector, MemeAnalytics, and platform adapters are arbitrary
+    # types).  Keep the field untyped at the pydantic boundary and validate it
+    # through the frozen runtime dataclass created below.
+    runtime: Any = Field(default=None, exclude=True, repr=False)
 
     @classmethod
     def configure(
@@ -92,6 +143,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         routing_settings: RoutingSettings | None = None,
         policy: MemePolicy | None = None,
         policy_settings: PolicySettings | None = None,
+        sender: MemeSender | None = None,
+        pipeline_settings: SendPipelineSettings | None = None,
     ):
         cls._matcher = matcher
         cls._index = index
@@ -106,6 +159,40 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         cls._routing_settings = routing_settings or RoutingSettings()
         cls._policy = policy
         cls._policy_settings = policy_settings or PolicySettings()
+        cls._sender = sender
+        cls._pipeline_settings = pipeline_settings or SendPipelineSettings()
+
+    @classmethod
+    def create(
+        cls,
+        matcher,
+        index,
+        max_candidates: int = 10,
+        min_score: float = 0.0,
+        match_mode: str = "keyword",
+        embedding_fallback: bool = True,
+        selector: MemeSelector | None = None,
+        selection_settings: SelectionSettings | None = None,
+        analytics: MemeAnalytics | None = None,
+        router: MemeRouter | None = None,
+        policy: MemePolicy | None = None,
+        sender: MemeSender | None = None,
+    ) -> "SendMemeTool":
+        runtime = SendMemeRuntime(
+            matcher=matcher,
+            index=index,
+            max_candidates=max_candidates,
+            min_score=min_score,
+            match_mode=match_mode,
+            embedding_fallback=embedding_fallback,
+            selector=selector,
+            selection_settings=selection_settings or SelectionSettings(),
+            analytics=analytics,
+            router=router,
+            policy=policy,
+            sender=sender or MemeSender(),
+        )
+        return cls(runtime=runtime)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
@@ -122,23 +209,28 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         if isinstance(scene, str) and scene.strip():
             tags.append(scene.strip()[:512])
         if not tags:
-            return ToolExecResult(
+            return _tool_result(
                 content=[{"type": "text", "text": "请提供至少一个表情包标签。"}]
             )
 
-        matcher = SendMemeTool._matcher
-        index = SendMemeTool._index
+        runtime = self.runtime
+        matcher = runtime.matcher if runtime is not None else SendMemeTool._matcher
+        index = runtime.index if runtime is not None else SendMemeTool._index
         if matcher is None or index is None:
-            return ToolExecResult(
+            return _tool_result(
                 content=[
                     {"type": "text", "text": "表情包匹配器未初始化，请联系管理员。"}
                 ]
             )
 
-        match_mode = SendMemeTool._match_mode
-        limit = SendMemeTool._max_candidates
-        min_score = SendMemeTool._min_score
-        do_fallback = SendMemeTool._embedding_fallback
+        match_mode = runtime.match_mode if runtime is not None else SendMemeTool._match_mode
+        limit = runtime.max_candidates if runtime is not None else SendMemeTool._max_candidates
+        min_score = runtime.min_score if runtime is not None else SendMemeTool._min_score
+        do_fallback = (
+            runtime.embedding_fallback
+            if runtime is not None
+            else SendMemeTool._embedding_fallback
+        )
 
         matches: list = []
         if match_mode == "embedding":
@@ -158,7 +250,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
 
         if not matches:
             available = index.get_unique_tags()[:50]
-            return ToolExecResult(
+            return _tool_result(
                 content=[
                     {
                         "type": "text",
@@ -174,7 +266,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
             if isinstance(path_value, str) and path_value and Path(path_value).is_file():
                 valid_matches.append(candidate)
         if not valid_matches:
-            return ToolExecResult(
+            return _tool_result(
                 content=[
                     {
                         "type": "text",
@@ -191,7 +283,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
         persona = kwargs.get("persona", "")
         if not isinstance(persona, str):
             persona = ""
-        router = SendMemeTool._router
+        router = runtime.router if runtime is not None else SendMemeTool._router
         route_info = {"pack": "", "fallback": False}
         if router is not None:
             valid_matches, route_info = router.route(
@@ -200,7 +292,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 pack=pack[:64],
                 persona=persona[:64],
             )
-        policy = SendMemeTool._policy
+        policy = runtime.policy if runtime is not None else SendMemeTool._policy
         policy_decision = None
         if policy is not None:
             policy_decision = policy.reserve(
@@ -209,7 +301,7 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 query_tags=tags,
             )
             if not policy_decision.allowed:
-                return ToolExecResult(
+                return _tool_result(
                     content=[
                         {
                             "type": "text",
@@ -218,8 +310,8 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                     ]
                 )
             valid_matches = list(policy_decision.candidates)
-        selector = SendMemeTool._selector
-        analytics = SendMemeTool._analytics
+        selector = runtime.selector if runtime is not None else SendMemeTool._selector
+        analytics = runtime.analytics if runtime is not None else SendMemeTool._analytics
         if analytics is not None:
             try:
                 valid_matches = analytics.personalize(valid_matches, scope=scope)
@@ -229,20 +321,25 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
             best = selector.choose(
                 valid_matches,
                 scope=scope,
-                settings=SendMemeTool._selection_settings,
+                settings=(
+                    runtime.selection_settings
+                    if runtime is not None
+                    else SendMemeTool._selection_settings
+                ),
             )
         else:
             best = valid_matches[0]
         if best is None:
             if policy is not None and policy_decision is not None:
                 policy.release(scope, policy_decision.reservation_id)
-            return ToolExecResult(
+            return _tool_result(
                 content=[{"type": "text", "text": "暂时没有可发送的表情包。"}]
             )
         img_path = Path(best["path"])
 
         try:
-            await event.send(event.chain_result([Image.fromFileSystem(str(img_path))]))
+            sender = runtime.sender if runtime is not None else SendMemeTool._sender
+            await (sender or MemeSender()).send(event, img_path)
             if analytics is not None:
                 try:
                     analytics.record_send(scope, best.get("id"), best.get("tags", []))
@@ -264,11 +361,11 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 except Exception as exc:
                     logger.warning(f"[astrbot_plugin_memes] 发送失败分析记录失败: {exc}")
             logger.error(f"[astrbot_plugin_memes] 发送表情包失败: {e}")
-            return ToolExecResult(
+            return _tool_result(
                 content=[{"type": "text", "text": f"发送表情包时出错: {e}"}]
             )
 
-        return ToolExecResult(
+        return _tool_result(
             content=[
                 {
                     "type": "text",

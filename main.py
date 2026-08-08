@@ -14,6 +14,7 @@ from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
 from .backend.policy import MemePolicy, PolicySettings
 from .backend.routing import MemeRouter, RoutingSettings
+from .backend.sender import MemeSender, SendPipelineSettings
 from .backend.selector import MemeSelector, SelectionSettings
 from .backend.thumbnails import ThumbnailManager, render_pillow_thumbnail
 from .backend.tool import SendMemeTool
@@ -228,6 +229,12 @@ class MemesPlugin(Star):
 
         max_candidates = config.get("max_match_candidates", 10)
         min_score = config.get("min_tag_score", 0.0)
+        self.pipeline_settings = SendPipelineSettings.safe(
+            mode=config.get("send_mode", "auto"),
+            timeout_seconds=config.get("send_timeout_seconds", 30.0),
+            retry_count=config.get("send_retry_count", 0),
+        )
+        self.sender = MemeSender(self.pipeline_settings)
         self.selection_settings = SelectionSettings.safe(
             mode=config.get("selection_mode", "weighted"),
             pool_size=config.get("selection_pool_size", 5),
@@ -235,7 +242,7 @@ class MemesPlugin(Star):
             history_size=config.get("selection_history_size", 20),
             deduplicate_files=config.get("deduplicate_files", True),
         )
-        SendMemeTool.configure(
+        self.meme_tool = SendMemeTool.create(
             self.matcher,
             self.index,
             max_candidates,
@@ -246,11 +253,10 @@ class MemesPlugin(Star):
             selection_settings=self.selection_settings,
             analytics=self.analytics,
             router=self.router,
-            routing_settings=self.routing_settings,
             policy=self.policy,
-            policy_settings=self.policy_settings,
+            sender=self.sender,
         )
-        self.context.add_llm_tools(SendMemeTool())
+        self.context.add_llm_tools(self.meme_tool)
 
         self._register_web_apis()
 
@@ -399,7 +405,7 @@ class MemesPlugin(Star):
             yield event.plain_result("当前没有可发送的候选。")
             return
         try:
-            yield event.image_result(str(best["path"]))
+            await self.sender.send(event, Path(best["path"]))
         except Exception as exc:
             self.selector.release(best, scope=scope)
             self.policy.release(scope, decision.reservation_id)
@@ -414,6 +420,8 @@ class MemesPlugin(Star):
             self.analytics.record_send(scope, best.get("id"), best.get("tags", []))
         except Exception as exc:
             logger.warning(f"[{PLUGIN_NAME}] 命令发送分析记录失败: {exc}")
+
+        yield event.plain_result(f"已发送表情包: {best.get('filename', '')}")
 
     def _load_index(self) -> dict:
         """Load atomically, then invalidate thumbnails only after success."""
@@ -498,6 +506,12 @@ class MemesPlugin(Star):
             self._api_policy,
             ["GET"],
             "获取发送权限与内容策略状态",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/pipeline",
+            self._api_pipeline,
+            ["GET"],
+            "获取图片发送管线状态",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/library/import",
@@ -765,6 +779,17 @@ class MemesPlugin(Star):
     async def _api_policy(self):
         return json_response(self.policy.status())
 
+    async def _api_pipeline(self):
+        settings = self.pipeline_settings
+        return json_response(
+            {
+                "mode": settings.mode,
+                "timeout_seconds": settings.timeout_seconds,
+                "retry_count": settings.retry_count,
+                "description": "image delivery pipeline",
+            }
+        )
+
     def _managed_rel_path(self, image_id: Any) -> str:
         if not isinstance(image_id, str) or image_id not in self.index.images:
             raise CatalogError("表情包不存在")
@@ -951,6 +976,9 @@ class MemesPlugin(Star):
             "max_file_bytes": self.config.get(
                 "max_file_bytes", 20 * 1024 * 1024
             ),
+            "send_mode": self.config.get("send_mode", "auto"),
+            "send_timeout_seconds": self.config.get("send_timeout_seconds", 30.0),
+            "send_retry_count": self.config.get("send_retry_count", 0),
             "backup_retention_count": self.config.get("backup_retention_count", 20),
             "auto_refresh": self.config.get("auto_refresh", True),
             "thumbnail_size": self.config.get("thumbnail_size", 200),

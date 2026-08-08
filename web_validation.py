@@ -36,6 +36,9 @@ CONFIG_KEYS = frozenset(
         "blocked_namespaces",
         "blocked_ids",
         "max_file_bytes",
+        "send_mode",
+        "send_timeout_seconds",
+        "send_retry_count",
         "backup_retention_count",
         "auto_refresh",
         "thumbnail_size",
@@ -43,6 +46,7 @@ CONFIG_KEYS = frozenset(
     }
 )
 MATCH_MODES = frozenset({"keyword", "embedding", "hybrid"})
+SEND_MODES = frozenset({"auto", "chain", "image_result"})
 SELECTION_MODES = frozenset({"weighted", "top", "random"})
 LIST_SORTS = frozenset(
     {
@@ -173,6 +177,14 @@ def validate_config_payload(
             validated[key] = _parse_policy_values(value, key, 256, 512)
         elif key == "max_file_bytes":
             validated[key] = _validate_int(value, key, 1024, 100 * 1024 * 1024)
+        elif key == "send_mode":
+            if not isinstance(value, str) or value not in SEND_MODES:
+                raise ValidationError("send_mode invalid")
+            validated[key] = value
+        elif key == "send_timeout_seconds":
+            validated[key] = _validate_number(value, key, 1.0, 120.0)
+        elif key == "send_retry_count":
+            validated[key] = _validate_int(value, key, 0, 2)
         elif key == "backup_retention_count":
             validated[key] = _validate_int(value, key, 1, 20)
         elif key == "thumbnail_size":
