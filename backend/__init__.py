@@ -22,6 +22,8 @@ __all__ = [
     "RoutingSettings",
     "MemePolicy",
     "PolicySettings",
+    "ManagedCatalog",
+    "CatalogError",
 ]
 
 
@@ -58,4 +60,8 @@ def __getattr__(name: str) -> Any:
         from .policy import MemePolicy, PolicySettings
 
         return {"MemePolicy": MemePolicy, "PolicySettings": PolicySettings}[name]
+    if name in {"ManagedCatalog", "CatalogError"}:
+        from .catalog import CatalogError, ManagedCatalog
+
+        return {"ManagedCatalog": ManagedCatalog, "CatalogError": CatalogError}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

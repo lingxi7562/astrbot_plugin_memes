@@ -17,6 +17,8 @@ const settingsBtn = document.getElementById("settings-btn");
 const settingsPanel = document.getElementById("settings-panel");
 const settingsOverlay = document.getElementById("settings-overlay");
 const settingsClose = document.getElementById("settings-close");
+const importBtn = document.getElementById("import-btn");
+const importInput = document.getElementById("import-input");
 const settingsSave = document.getElementById("settings-save");
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
@@ -232,11 +234,92 @@ function render(list) {
     }
     info.appendChild(tagsDiv);
 
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    if (typeof meme.id === "string" && meme.id.startsWith("managed:")) {
+      const tagButton = document.createElement("button");
+      tagButton.type = "button";
+      tagButton.className = "card-action";
+      tagButton.textContent = "标签";
+      tagButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void editTags(meme);
+      });
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "card-action card-action-danger";
+      deleteButton.textContent = "删除";
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void deleteMeme(meme);
+      });
+      actions.appendChild(tagButton);
+      actions.appendChild(deleteButton);
+    }
+    info.appendChild(actions);
+
     card.appendChild(imgWrap);
     card.appendChild(info);
     gallery.appendChild(card);
   }
 }
+
+async function editTags(meme) {
+  const initial = Array.isArray(meme.tags) ? meme.tags.join(", ") : "";
+  const entered = window.prompt("输入标签，用逗号分隔", initial);
+  if (entered === null) return;
+  const tags = entered.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 32);
+  try {
+    await bridge.apiPost("library/tags", { id: meme.id, tags });
+    await load();
+  } catch (err) {
+    updateStats("标签更新失败");
+    console.error("更新标签失败:", err);
+  }
+}
+
+async function deleteMeme(meme) {
+  if (!window.confirm(`确定删除「${meme.filename || meme.id}」吗？`)) return;
+  try {
+    await bridge.apiPost("library/delete", { id: meme.id });
+    await load();
+  } catch (err) {
+    updateStats("删除失败");
+    console.error("删除表情包失败:", err);
+  }
+}
+
+importBtn.addEventListener("click", () => importInput.click());
+importInput.addEventListener("change", async () => {
+  const file = importInput.files && importInput.files[0];
+  importInput.value = "";
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    updateStats("文件超过 10 MiB 限制");
+    return;
+  }
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error("读取失败"));
+      reader.readAsDataURL(file);
+    });
+    const separator = typeof dataUrl === "string" ? dataUrl.indexOf(",") : -1;
+    const encoded = separator >= 0 ? dataUrl.slice(separator + 1) : "";
+    const entered = window.prompt("可选：输入标签，用逗号分隔", "");
+    if (entered === null) return;
+    await bridge.apiPost("library/import", {
+      filename: file.name,
+      data_b64: encoded,
+      tags: entered.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 32),
+    });
+    await load();
+  } catch (err) {
+    updateStats("导入失败");
+    console.error("导入表情包失败:", err);
+  }
+});
 
 function applyFilter(query) {
   const q = (query !== undefined ? query : filterInput.value)

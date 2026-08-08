@@ -6,6 +6,7 @@ from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .backend.analytics import AnalyticsSettings, MemeAnalytics
+from .backend.catalog import CatalogError, ManagedCatalog
 from .backend.embedder import MemeEmbedder
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
@@ -48,6 +49,11 @@ class MemesPlugin(Star):
             / "library"
         )
         managed_root.mkdir(parents=True, exist_ok=True)
+        self.managed_root = managed_root
+        self.catalog = ManagedCatalog(
+            managed_root,
+            managed_root.parent / "managed_metadata.json",
+        )
         self.routing_settings = RoutingSettings.safe(
             packs=config.get("meme_packs", []),
             default_pack=config.get("default_pack", ""),
@@ -241,7 +247,15 @@ class MemesPlugin(Star):
     def _load_index(self) -> dict:
         """Load atomically, then invalidate thumbnails only after success."""
 
-        return self._thumbnails.run_index_load(self.index.load)
+        def load_with_metadata() -> dict:
+            report = self.index.load()
+            try:
+                self.catalog.apply(self.index)
+            except Exception as exc:
+                logger.warning(f"[{PLUGIN_NAME}] managed 标签元数据不可用: {exc}")
+            return report
+
+        return self._thumbnails.run_index_load(load_with_metadata)
 
     def _index_is_loaded(self) -> bool:
         return bool(self.index.get_status_report().get("committed"))
@@ -313,6 +327,30 @@ class MemesPlugin(Star):
             self._api_policy,
             ["GET"],
             "获取发送权限与内容策略状态",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/library/import",
+            self._api_import,
+            ["POST"],
+            "导入图片到 managed 表情包库",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/library/tags",
+            self._api_update_tags,
+            ["POST"],
+            "更新 managed 图片标签",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/library/delete",
+            self._api_delete,
+            ["POST"],
+            "删除 managed 图片",
+        )
+        ctx.register_web_api(
+            f"/{PLUGIN_NAME}/library/batch",
+            self._api_batch,
+            ["POST"],
+            "批量管理 managed 图片",
         )
         ctx.register_web_api(
             f"/{PLUGIN_NAME}/config",
@@ -531,6 +569,118 @@ class MemesPlugin(Star):
 
     async def _api_policy(self):
         return json_response(self.policy.status())
+
+    def _managed_rel_path(self, image_id: Any) -> str:
+        if not isinstance(image_id, str) or image_id not in self.index.images:
+            raise CatalogError("表情包不存在")
+        item = self.index.images[image_id]
+        if not isinstance(item, dict) or item.get("source") != "managed":
+            raise CatalogError("仅允许管理 managed 来源图片")
+        rel_path = item.get("rel_path")
+        if not isinstance(rel_path, str) or not rel_path:
+            raise CatalogError("图片路径无效")
+        try:
+            live_path = self.index.get_abs_path(item)
+        except Exception as exc:
+            raise CatalogError("图片路径已失效") from exc
+        if not live_path.is_file():
+            raise CatalogError("图片文件不存在")
+        return rel_path
+
+    async def _api_import(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        try:
+            result = self.catalog.import_base64(
+                body.get("filename"), body.get("data_b64"), body.get("tags", [])
+            )
+            report = self._load_index()
+            result["id"] = next(
+                (
+                    image_id
+                    for image_id, item in self.index.images.items()
+                    if isinstance(item, dict)
+                    and item.get("source") == "managed"
+                    and item.get("rel_path") == result["rel_path"]
+                ),
+                "",
+            )
+            return json_response({"status": "ok", "item": result, "count": report.get("count", 0)})
+        except CatalogError as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception as exc:
+            logger.error(f"[{PLUGIN_NAME}] 导入 managed 图片失败: {exc}")
+            return error_response("导入图片失败", status_code=500)
+
+    async def _api_update_tags(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        try:
+            rel_path = self._managed_rel_path(body.get("id"))
+            tags = self.catalog.set_tags(rel_path, body.get("tags", []))
+            self._load_index()
+            return json_response({"status": "ok", "id": body.get("id"), "tags": tags})
+        except CatalogError as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception as exc:
+            logger.error(f"[{PLUGIN_NAME}] 更新 managed 标签失败: {exc}")
+            return error_response("更新标签失败", status_code=500)
+
+    async def _api_delete(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        try:
+            rel_path = self._managed_rel_path(body.get("id"))
+            self.catalog.delete_path(rel_path)
+            self._load_index()
+            return json_response({"status": "ok", "id": body.get("id")})
+        except CatalogError as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception as exc:
+            logger.error(f"[{PLUGIN_NAME}] 删除 managed 图片失败: {exc}")
+            return error_response("删除图片失败", status_code=500)
+
+    async def _api_batch(self):
+        body = await request.json(default={})
+        if not isinstance(body, dict) or not isinstance(body.get("ids"), list):
+            return error_response("ids 必须是列表", status_code=400)
+        ids = [item for item in body["ids"] if isinstance(item, str)][:100]
+        if len(ids) != len(body["ids"]) or not ids:
+            return error_response("ids 数量或格式无效", status_code=400)
+        action = body.get("action")
+        if action not in {"tags", "delete"}:
+            return error_response("action 必须是 tags 或 delete", status_code=400)
+        if action == "tags":
+            try:
+                tags = self.catalog.validate_tags(body.get("tags", []))
+            except CatalogError as exc:
+                return error_response(str(exc), status_code=400)
+        else:
+            tags = []
+        completed: list[str] = []
+        errors: list[dict[str, str]] = []
+        for image_id in ids:
+            try:
+                rel_path = self._managed_rel_path(image_id)
+                if action == "tags":
+                    self.catalog.set_tags(rel_path, tags)
+                else:
+                    self.catalog.delete_path(rel_path)
+                completed.append(image_id)
+            except CatalogError as exc:
+                errors.append({"id": image_id, "error": str(exc)})
+        if completed:
+            try:
+                self._load_index()
+            except Exception:
+                logger.exception(f"[{PLUGIN_NAME}] 批量操作后刷新索引失败")
+                return error_response("批量操作完成但刷新索引失败", status_code=500)
+        return json_response(
+            {"status": "ok", "completed": completed, "errors": errors}
+        )
 
     async def _api_get_config(self):
         emb_providers = []

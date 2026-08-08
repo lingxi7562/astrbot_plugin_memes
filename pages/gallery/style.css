@@ -281,6 +281,32 @@ body {
   flex: 1;
 }
 
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.card-action {
+  padding: 4px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.card-action:hover {
+  color: var(--tag-text);
+  border-color: var(--tag-text);
+}
+
+.card-action-danger:hover {
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
 .filename {
   font-size: 12px;
   color: var(--text);
