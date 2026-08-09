@@ -502,18 +502,21 @@ async function loadConfig() {
 
 function toggleEmotionFields(mode) {
   const settings = document.getElementById("emotion-agent-settings");
-  const enabled = mode === "emotion_agent";
+  const enabled = mode === "emotion_agent" || mode === "emotion_only";
   settings.style.opacity = enabled ? "" : "0.5";
   settings.style.pointerEvents = enabled ? "" : "none";
 }
 
 function updateEmotionStatus(cfg) {
   const statusEl = document.getElementById("emotion-agent-status");
-  if ((cfg.meme_agent_mode || "direct") !== "emotion_agent") {
+  const mode = cfg.meme_agent_mode || "direct";
+  if (mode === "direct") {
     statusEl.textContent = "当前使用主对话 LLM 直连模式";
     statusEl.className = "setting-hint";
   } else if (cfg.emotion_agent_ready) {
-    statusEl.textContent = "情绪 Agent 已配置，保存后重载插件生效";
+    statusEl.textContent = mode === "emotion_only"
+      ? "纯情绪 Agent 已配置，将在主回复完成后自动审核"
+      : "情绪 Agent 已配置，保存后重载插件生效";
     statusEl.className = "setting-hint setting-ok";
   } else {
     statusEl.textContent = "尚未配置 Provider ID，委托请求会安全跳过";

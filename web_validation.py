@@ -50,7 +50,7 @@ CONFIG_KEYS = frozenset(
     }
 )
 MATCH_MODES = frozenset({"keyword", "embedding", "hybrid"})
-MEME_AGENT_MODES = frozenset({"direct", "emotion_agent"})
+MEME_AGENT_MODES = frozenset({"direct", "emotion_agent", "emotion_only"})
 SEND_MODES = frozenset({"auto", "chain", "image_result"})
 SELECTION_MODES = frozenset({"weighted", "top", "random"})
 LIST_SORTS = frozenset(

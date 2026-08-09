@@ -258,14 +258,14 @@
   "meme_agent_mode": {
     "description": "LLM 表情包决策模式",
     "type": "string",
-    "hint": "direct 由当前对话 LLM 直接发送；emotion_agent 由当前 LLM 只发起一次委托，再由独立情绪 Agent 分析并调用 send_meme",
-    "options": ["direct", "emotion_agent"],
+    "hint": "direct 由当前对话 LLM 直接发送；emotion_agent 由当前 LLM 发起一次委托；emotion_only 不向当前 LLM 注册工具，回复完成后由独立情绪 Agent 自动审核",
+    "options": ["direct", "emotion_agent", "emotion_only"],
     "default": "direct"
   },
   "emotion_provider_id": {
     "description": "情绪 Agent 使用的模型 Provider ID",
     "type": "string",
-    "hint": "emotion_agent 模式必填；请选择支持 Function Calling/tool_use 的 Chat Provider",
+    "hint": "emotion_agent 或 emotion_only 模式必填；请选择支持 Function Calling/tool_use 的 Chat Provider",
     "_special": "select_provider",
     "default": ""
   },

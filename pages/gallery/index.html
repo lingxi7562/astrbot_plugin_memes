@@ -86,8 +86,9 @@
           <select id="setting-meme-agent-mode" class="setting-select">
             <option value="direct">主对话 LLM 直接发送</option>
             <option value="emotion_agent">委托独立情绪 Agent</option>
+            <option value="emotion_only">纯情绪 Agent 自动审核</option>
           </select>
-          <p class="setting-hint">委托模式下主 LLM 只发起一次请求，由情绪 Agent 分析并私下调用发送工具。</p>
+          <p class="setting-hint">委托模式只传本轮用户消息和助手回复；纯情绪模式不向主 LLM 注册任何表情包工具。</p>
         </div>
 
         <div class="setting-group" id="emotion-agent-settings">

@@ -78,6 +78,12 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validate_config_payload({"match_mode": "anything"}, set())
 
+    def test_accepts_emotion_only_mode(self):
+        self.assertEqual(
+            validate_config_payload({"meme_agent_mode": "emotion_only"}, set()),
+            {"meme_agent_mode": "emotion_only"},
+        )
+
     def test_rejects_type_coercion_unknown_keys_and_bad_ranges(self):
         invalid_payloads = (
             {"embedding_fallback": 1},
