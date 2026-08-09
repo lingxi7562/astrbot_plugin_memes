@@ -10,6 +10,7 @@ from .backend.analytics import AnalyticsSettings, MemeAnalytics
 from .backend.backup import BackupError, BackupManager
 from .backend.catalog import CatalogError, ManagedCatalog
 from .backend.embedder import MemeEmbedder
+from .backend.emotion_agent import EmotionAgentSettings, EmotionDelegationTool
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
 from .backend.policy import MemePolicy, PolicySettings
@@ -256,7 +257,41 @@ class MemesPlugin(Star):
             policy=self.policy,
             sender=self.sender,
         )
-        self.context.add_llm_tools(self.meme_tool)
+        configured_agent_mode = config.get("meme_agent_mode", "direct")
+        self.meme_agent_mode = (
+            configured_agent_mode.strip()
+            if isinstance(configured_agent_mode, str)
+            else "direct"
+        )
+        if self.meme_agent_mode not in {"direct", "emotion_agent"}:
+            logger.warning(
+                f"[{PLUGIN_NAME}] meme_agent_mode 无效，已回退 direct 模式"
+            )
+            self.meme_agent_mode = "direct"
+        self.emotion_agent_settings = EmotionAgentSettings.safe(
+            provider_id=config.get("emotion_provider_id", ""),
+            max_steps=config.get("emotion_max_steps", 2),
+            timeout_seconds=config.get("emotion_timeout_seconds", 10.0),
+        )
+        self.emotion_tool = None
+        if self.meme_agent_mode == "emotion_agent":
+            self.emotion_tool = EmotionDelegationTool.create(
+                self.meme_tool,
+                provider_id=self.emotion_agent_settings.provider_id,
+                max_steps=self.emotion_agent_settings.max_steps,
+                timeout_seconds=self.emotion_agent_settings.timeout_seconds,
+            )
+            if not self.emotion_agent_settings.provider_id:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] emotion_agent 模式尚未配置 emotion_provider_id；"
+                    "委托请求将安全跳过"
+                )
+            # In delegated mode the main conversation model must not see the
+            # private send_meme tool.  It only receives one low-effort signal
+            # tool; the emotion agent gets send_meme through its private ToolSet.
+            self.context.add_llm_tools(self.emotion_tool)
+        else:
+            self.context.add_llm_tools(self.meme_tool)
 
         self._register_web_apis()
 
@@ -786,6 +821,11 @@ class MemesPlugin(Star):
                 "mode": settings.mode,
                 "timeout_seconds": settings.timeout_seconds,
                 "retry_count": settings.retry_count,
+                "decision_mode": self.meme_agent_mode,
+                "emotion_agent_ready": bool(
+                    self.meme_agent_mode == "emotion_agent"
+                    and self.emotion_agent_settings.provider_id
+                ),
                 "description": "image delivery pipeline",
             }
         )
@@ -942,7 +982,30 @@ class MemesPlugin(Star):
         for p in self.context.get_all_embedding_providers():
             meta = p.meta()
             emb_providers.append({"id": meta.id, "type": meta.type, "dim": p.get_dim()})
+        emotion_providers = []
+        try:
+            for provider in self.context.get_all_providers():
+                meta = provider.meta()
+                provider_id = getattr(meta, "id", "")
+                if isinstance(provider_id, str) and provider_id:
+                    emotion_providers.append(
+                        {
+                            "id": provider_id,
+                            "type": getattr(meta, "type", "chat_completion"),
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 获取情绪 Agent Provider 列表失败: {exc}")
         return json_response({
+            "meme_agent_mode": self.meme_agent_mode,
+            "emotion_provider_id": self.emotion_agent_settings.provider_id,
+            "emotion_max_steps": self.emotion_agent_settings.max_steps,
+            "emotion_timeout_seconds": self.emotion_agent_settings.timeout_seconds,
+            "emotion_agent_ready": bool(
+                self.meme_agent_mode == "emotion_agent"
+                and self.emotion_agent_settings.provider_id
+            ),
+            "available_emotion_providers": emotion_providers,
             "match_mode": self.config.get("match_mode", "keyword"),
             "embedding_provider_id": self.config.get("embedding_provider_id", ""),
             "embedding_fallback": self.config.get("embedding_fallback", True),

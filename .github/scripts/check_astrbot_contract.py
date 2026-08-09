@@ -61,6 +61,22 @@ def main() -> None:
     }
     if "register_web_api" not in context_methods:
         fail("minimum AstrBot Context does not provide register_web_api")
+    if "tool_loop_agent" not in context_methods:
+        fail("minimum AstrBot Context does not provide tool_loop_agent")
+    if "get_all_providers" not in context_methods:
+        fail("minimum AstrBot Context does not provide get_all_providers")
+
+    agent_tool_path = astrbot_checkout / "astrbot" / "core" / "agent" / "tool.py"
+    if not agent_tool_path.is_file():
+        fail("minimum AstrBot agent tool module is missing")
+    agent_tool_tree = ast.parse(agent_tool_path.read_text(encoding="utf-8"))
+    agent_tool_names = {
+        node.name
+        for node in ast.walk(agent_tool_tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if "ToolSet" not in agent_tool_names:
+        fail("minimum AstrBot agent tool module does not provide ToolSet")
 
     event_path = astrbot_checkout / "astrbot" / "api" / "event" / "__init__.py"
     if not event_path.is_file():

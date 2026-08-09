@@ -443,6 +443,29 @@ async function loadConfig() {
     const cfg = await bridge.apiGet("config");
     currentConfig = cfg;
 
+    document.getElementById("setting-meme-agent-mode").value = cfg.meme_agent_mode || "direct";
+    const emotionSelect = document.getElementById("setting-emotion-provider");
+    emotionSelect.replaceChildren();
+    const noEmotionProvider = document.createElement("option");
+    noEmotionProvider.value = "";
+    noEmotionProvider.textContent = "未选择";
+    emotionSelect.appendChild(noEmotionProvider);
+    for (const provider of cfg.available_emotion_providers || []) {
+      if (!provider || typeof provider.id !== "string") continue;
+      const option = document.createElement("option");
+      option.value = provider.id;
+      option.textContent = `${provider.id} (${provider.type || "chat"})`;
+      emotionSelect.appendChild(option);
+    }
+    if (cfg.emotion_provider_id && ![...emotionSelect.options].some((option) => option.value === cfg.emotion_provider_id)) {
+      const configuredOption = document.createElement("option");
+      configuredOption.value = cfg.emotion_provider_id;
+      configuredOption.textContent = `${cfg.emotion_provider_id} (当前配置)`;
+      emotionSelect.appendChild(configuredOption);
+    }
+    emotionSelect.value = cfg.emotion_provider_id || "";
+    document.getElementById("setting-emotion-steps").value = cfg.emotion_max_steps || 2;
+    document.getElementById("setting-emotion-timeout").value = cfg.emotion_timeout_seconds || 10;
     document.getElementById("setting-match-mode").value = cfg.match_mode;
     document.getElementById("setting-fallback").checked = cfg.embedding_fallback;
     document.getElementById("setting-max-candidates").value = cfg.max_match_candidates;
@@ -468,10 +491,33 @@ async function loadConfig() {
     }
     embSelect.value = cfg.embedding_provider_id;
 
+    toggleEmotionFields(cfg.meme_agent_mode || "direct");
+    updateEmotionStatus(cfg);
     updateEmbeddingStatus(cfg);
     toggleEmbeddingFields(cfg.match_mode);
   } catch (err) {
     console.error("加载配置失败:", err);
+  }
+}
+
+function toggleEmotionFields(mode) {
+  const settings = document.getElementById("emotion-agent-settings");
+  const enabled = mode === "emotion_agent";
+  settings.style.opacity = enabled ? "" : "0.5";
+  settings.style.pointerEvents = enabled ? "" : "none";
+}
+
+function updateEmotionStatus(cfg) {
+  const statusEl = document.getElementById("emotion-agent-status");
+  if ((cfg.meme_agent_mode || "direct") !== "emotion_agent") {
+    statusEl.textContent = "当前使用主对话 LLM 直连模式";
+    statusEl.className = "setting-hint";
+  } else if (cfg.emotion_agent_ready) {
+    statusEl.textContent = "情绪 Agent 已配置，保存后重载插件生效";
+    statusEl.className = "setting-hint setting-ok";
+  } else {
+    statusEl.textContent = "尚未配置 Provider ID，委托请求会安全跳过";
+    statusEl.className = "setting-hint setting-warn";
   }
 }
 
@@ -509,6 +555,10 @@ document.getElementById("setting-match-mode").addEventListener("change", (e) => 
   toggleEmbeddingFields(e.target.value);
 });
 
+document.getElementById("setting-meme-agent-mode").addEventListener("change", (e) => {
+  toggleEmotionFields(e.target.value);
+});
+
 function openSettings() {
   settingsPanel.classList.add("open");
   settingsOverlay.style.display = "block";
@@ -529,6 +579,10 @@ settingsSave.addEventListener("click", async () => {
   settingsSave.textContent = "保存中...";
   try {
     const payload = {
+      meme_agent_mode: document.getElementById("setting-meme-agent-mode").value,
+      emotion_provider_id: document.getElementById("setting-emotion-provider").value,
+      emotion_max_steps: parseInt(document.getElementById("setting-emotion-steps").value) || 2,
+      emotion_timeout_seconds: parseFloat(document.getElementById("setting-emotion-timeout").value) || 10,
       match_mode: document.getElementById("setting-match-mode").value,
       embedding_provider_id: document.getElementById("setting-emb-provider").value,
       embedding_fallback: document.getElementById("setting-fallback").checked,

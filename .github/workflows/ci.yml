@@ -25,6 +25,7 @@ jobs:
             astrbot/api/event/__init__.py
             astrbot/api/event/filter/__init__.py
             astrbot/core/star/context.py
+            astrbot/core/agent/tool.py
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:

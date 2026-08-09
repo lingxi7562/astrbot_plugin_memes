@@ -255,6 +255,32 @@
     "default": {},
     "items": {}
   },
+  "meme_agent_mode": {
+    "description": "LLM 表情包决策模式",
+    "type": "string",
+    "hint": "direct 由当前对话 LLM 直接发送；emotion_agent 由当前 LLM 只发起一次委托，再由独立情绪 Agent 分析并调用 send_meme",
+    "options": ["direct", "emotion_agent"],
+    "default": "direct"
+  },
+  "emotion_provider_id": {
+    "description": "情绪 Agent 使用的模型 Provider ID",
+    "type": "string",
+    "hint": "emotion_agent 模式必填；请选择支持 Function Calling/tool_use 的 Chat Provider",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "emotion_max_steps": {
+    "description": "情绪 Agent 最大工具循环次数",
+    "type": "int",
+    "hint": "情绪 Agent 通常只需分析一次并调用一次 send_meme",
+    "default": 2
+  },
+  "emotion_timeout_seconds": {
+    "description": "情绪 Agent 超时秒数",
+    "type": "float",
+    "hint": "超时后安全跳过本次表情包发送",
+    "default": 10.0
+  },
   "match_mode": {
     "description": "表情包匹配模式",
     "type": "string",

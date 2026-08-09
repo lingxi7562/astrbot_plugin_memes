@@ -37,7 +37,7 @@ data/plugin_data/astrbot_plugin_memes/library/
 
 ## LLM 能调的 Tool
 
-插件注册了一个叫 `send_meme` 的函数工具，LLM 对话时可以自主调用：
+默认模式下，插件注册了一个叫 `send_meme` 的函数工具，LLM 对话时可以自主调用：
 
 ```
 # 推荐：只用一句话描述意图，插件自动完成匹配和发送
@@ -56,6 +56,16 @@ send_meme(tags=["吐槽"], pack="fun")
 | `persona` | 字符串 | ✗ | 高级选项；指定人格别名 |
 
 调用一次即可；插件会自动匹配、路由、去重、检查策略并发送。成功结果会明确标记 `status=sent`，无需再次调用。
+
+### 情绪 Agent 委托模式
+
+将配置中的 **LLM 表情包决策模式** 设置为 `emotion_agent` 后，主对话 LLM 不会再看到
+`send_meme`。它只会在认为需要表情包时调用一次 `request_meme_review`，插件随后使用单独配置的
+**情绪 Agent Provider** 阅读当前会话。情绪 Agent 自己判断主情绪，并通过私有工具调用
+`send_meme`；如果判断不适合发送，则直接结束。
+
+这种模式把复杂的情绪理解从主对话模型中移出，同时保留插件现有的匹配、路由、权限、去重和发送管线。
+情绪 Agent 的工具循环和超时均有上限，Provider 不可用时本次请求会安全跳过，不会让主模型重复调用。
 
 ### 一句话里有多种情绪
 
@@ -94,6 +104,9 @@ send_meme(tags=["吐槽"], pack="fun")
 
 都是在 WebUI 设置面板里改，不用动代码：
 
+- **LLM 表情包决策模式** — `direct` 由主对话 LLM 直接调用 `send_meme`；`emotion_agent` 由主 LLM 轻量委托情绪 Agent
+- **情绪 Agent Provider** — 委托模式下负责读取对话、提取主情绪并调用私有 `send_meme` 的模型
+- **情绪 Agent 限制** — 最大工具循环次数与超时时间，超时会安全跳过
 - **匹配模式** — 关键词 / 向量 / 混合
 - **Embedding Provider** — 用哪个模型来算向量，自动列出可用的
 - **向量失败回退** — 开了的话向量不灵就自动换关键词
@@ -141,7 +154,8 @@ astrbot_plugin_memes/
 │   ├── sender.py           # 兼容多版本事件 API 的发送管线
 │   ├── query.py            # intent 归一化、上下文兜底与标签提取
 │   ├── llm_schema.py       # 低认知负荷的 Tool 参数契约
-│   └── tool.py             # LLM 调用的 tool
+│   ├── tool.py             # send_meme 发送管线
+│   └── emotion_agent.py    # 情绪 Agent 委托桥接
 └── pages/gallery/          # 管理页面
 ```
 

@@ -13,6 +13,10 @@ from web_validation import (
 class ConfigValidationTests(unittest.TestCase):
     def test_accepts_valid_partial_update(self):
         payload = {
+            "meme_agent_mode": "emotion_agent",
+            "emotion_provider_id": "chat-reviewer",
+            "emotion_max_steps": 2,
+            "emotion_timeout_seconds": 12.0,
             "match_mode": "hybrid",
             "embedding_provider_id": "embed-1",
             "embedding_fallback": False,
@@ -77,6 +81,12 @@ class ConfigValidationTests(unittest.TestCase):
     def test_rejects_type_coercion_unknown_keys_and_bad_ranges(self):
         invalid_payloads = (
             {"embedding_fallback": 1},
+            {"meme_agent_mode": "unknown"},
+            {"emotion_provider_id": "x" * 257},
+            {"emotion_max_steps": 0},
+            {"emotion_max_steps": 5},
+            {"emotion_timeout_seconds": 0.9},
+            {"emotion_timeout_seconds": 61},
             {"auto_refresh": "true"},
             {"max_match_candidates": True},
             {"max_match_candidates": 101},
