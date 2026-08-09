@@ -82,6 +82,28 @@
       </div>
       <div class="settings-body">
         <div class="setting-group">
+          <label class="setting-label" for="setting-meme-agent-mode">LLM 表情包决策模式</label>
+          <select id="setting-meme-agent-mode" class="setting-select">
+            <option value="direct">主对话 LLM 直接发送</option>
+            <option value="emotion_agent">委托独立情绪 Agent</option>
+            <option value="emotion_only">纯情绪 Agent 自动审核</option>
+          </select>
+          <p class="setting-hint">委托模式只传本轮用户消息和助手回复；纯情绪模式不向主 LLM 注册任何表情包工具。</p>
+        </div>
+
+        <div class="setting-group" id="emotion-agent-settings">
+          <label class="setting-label" for="setting-emotion-provider">情绪 Agent Provider ID</label>
+          <select id="setting-emotion-provider" class="setting-select">
+            <option value="">未选择</option>
+          </select>
+          <label class="setting-label" for="setting-emotion-steps">最大工具循环次数</label>
+          <input id="setting-emotion-steps" class="setting-input" type="number" min="1" max="4" />
+          <label class="setting-label" for="setting-emotion-timeout">超时秒数</label>
+          <input id="setting-emotion-timeout" class="setting-input" type="number" min="1" max="60" step="0.5" />
+          <p class="setting-hint" id="emotion-agent-status"></p>
+        </div>
+
+        <div class="setting-group">
           <label class="setting-label" for="setting-match-mode">匹配模式</label>
           <select id="setting-match-mode" class="setting-select">
             <option value="keyword">关键词匹配</option>

@@ -24,6 +24,10 @@ __all__ = [
     "PolicySettings",
     "MemeSender",
     "SendPipelineSettings",
+    "EmotionAgentRuntime",
+    "EmotionAgentSettings",
+    "EmotionDelegationTool",
+    "EmotionOnlyReviewer",
     "QueryPlan",
     "build_query_plan",
     "ManagedCatalog",
@@ -70,6 +74,25 @@ def __getattr__(name: str) -> Any:
         from .sender import MemeSender, SendPipelineSettings
 
         return {"MemeSender": MemeSender, "SendPipelineSettings": SendPipelineSettings}[name]
+    if name in {
+        "EmotionAgentRuntime",
+        "EmotionAgentSettings",
+        "EmotionDelegationTool",
+        "EmotionOnlyReviewer",
+    }:
+        from .emotion_agent import (
+            EmotionAgentRuntime,
+            EmotionAgentSettings,
+            EmotionDelegationTool,
+            EmotionOnlyReviewer,
+        )
+
+        return {
+            "EmotionAgentRuntime": EmotionAgentRuntime,
+            "EmotionAgentSettings": EmotionAgentSettings,
+            "EmotionDelegationTool": EmotionDelegationTool,
+            "EmotionOnlyReviewer": EmotionOnlyReviewer,
+        }[name]
     if name in {"QueryPlan", "build_query_plan"}:
         from .query import QueryPlan, build_query_plan
 

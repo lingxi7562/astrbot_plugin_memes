@@ -13,6 +13,7 @@ from pathlib import Path
 EXPECTED_VERSION = "4.26.0"
 REQUIRED_WEB_EXPORTS = {"error_response", "json_response", "request"}
 REQUIRED_EVENT_EXPORTS = {"filter", "AstrMessageEvent"}
+REQUIRED_FILTER_EXPORTS = {"on_llm_response"}
 
 
 def fail(message: str) -> None:
@@ -61,6 +62,24 @@ def main() -> None:
     }
     if "register_web_api" not in context_methods:
         fail("minimum AstrBot Context does not provide register_web_api")
+    if "tool_loop_agent" not in context_methods:
+        fail("minimum AstrBot Context does not provide tool_loop_agent")
+    if "get_all_providers" not in context_methods:
+        fail("minimum AstrBot Context does not provide get_all_providers")
+    if "get_provider_by_id" not in context_methods:
+        fail("minimum AstrBot Context does not provide get_provider_by_id")
+
+    agent_tool_path = astrbot_checkout / "astrbot" / "core" / "agent" / "tool.py"
+    if not agent_tool_path.is_file():
+        fail("minimum AstrBot agent tool module is missing")
+    agent_tool_tree = ast.parse(agent_tool_path.read_text(encoding="utf-8"))
+    agent_tool_names = {
+        node.name
+        for node in ast.walk(agent_tool_tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if "ToolSet" not in agent_tool_names:
+        fail("minimum AstrBot agent tool module does not provide ToolSet")
 
     event_path = astrbot_checkout / "astrbot" / "api" / "event" / "__init__.py"
     if not event_path.is_file():
@@ -82,6 +101,21 @@ def main() -> None:
     filter_path = astrbot_checkout / "astrbot" / "api" / "event" / "filter" / "__init__.py"
     if not filter_path.is_file():
         fail("minimum AstrBot command filter module is missing")
+    filter_tree = ast.parse(filter_path.read_text(encoding="utf-8"))
+    filter_names = {
+        alias.asname or alias.name.split(".")[-1]
+        for node in ast.walk(filter_tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    filter_names.update(
+        node.name
+        for node in ast.walk(filter_tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    missing_filter_exports = sorted(REQUIRED_FILTER_EXPORTS - filter_names)
+    if missing_filter_exports:
+        fail(f"minimum AstrBot filter API is missing exports: {missing_filter_exports}")
 
     plugin_tree = ast.parse((repository / "main.py").read_text(encoding="utf-8"))
     imported_web_names = {

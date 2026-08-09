@@ -11,6 +11,10 @@ from typing import Any, Iterable, Mapping
 
 CONFIG_KEYS = frozenset(
     {
+        "meme_agent_mode",
+        "emotion_provider_id",
+        "emotion_max_steps",
+        "emotion_timeout_seconds",
         "match_mode",
         "embedding_provider_id",
         "embedding_fallback",
@@ -46,6 +50,7 @@ CONFIG_KEYS = frozenset(
     }
 )
 MATCH_MODES = frozenset({"keyword", "embedding", "hybrid"})
+MEME_AGENT_MODES = frozenset({"direct", "emotion_agent", "emotion_only"})
 SEND_MODES = frozenset({"auto", "chain", "image_result"})
 SELECTION_MODES = frozenset({"weighted", "top", "random"})
 LIST_SORTS = frozenset(
@@ -112,7 +117,19 @@ def validate_config_payload(
     provider_ids = {provider_id for provider_id in available_provider_ids if provider_id}
     validated: dict[str, Any] = {}
     for key, value in payload.items():
-        if key == "match_mode":
+        if key == "meme_agent_mode":
+            if not isinstance(value, str) or value not in MEME_AGENT_MODES:
+                raise ValidationError("meme_agent_mode 无效")
+            validated[key] = value
+        elif key == "emotion_provider_id":
+            if not isinstance(value, str) or len(value.strip()) > 256:
+                raise ValidationError("emotion_provider_id 必须是至多 256 个字符的字符串")
+            validated[key] = value.strip()
+        elif key == "emotion_max_steps":
+            validated[key] = _validate_int(value, key, 1, 4)
+        elif key == "emotion_timeout_seconds":
+            validated[key] = _validate_number(value, key, 1.0, 60.0)
+        elif key == "match_mode":
             if not isinstance(value, str) or value not in MATCH_MODES:
                 raise ValidationError("match_mode 无效")
             validated[key] = value

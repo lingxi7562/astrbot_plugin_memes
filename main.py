@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -10,6 +11,11 @@ from .backend.analytics import AnalyticsSettings, MemeAnalytics
 from .backend.backup import BackupError, BackupManager
 from .backend.catalog import CatalogError, ManagedCatalog
 from .backend.embedder import MemeEmbedder
+from .backend.emotion_agent import (
+    EmotionAgentSettings,
+    EmotionDelegationTool,
+    EmotionOnlyReviewer,
+)
 from .backend.index import MemeIndex, SourceConfigurationError
 from .backend.matcher import TagMatcher
 from .backend.policy import MemePolicy, PolicySettings
@@ -256,9 +262,114 @@ class MemesPlugin(Star):
             policy=self.policy,
             sender=self.sender,
         )
-        self.context.add_llm_tools(self.meme_tool)
+        configured_agent_mode = config.get("meme_agent_mode", "direct")
+        self.meme_agent_mode = (
+            configured_agent_mode.strip()
+            if isinstance(configured_agent_mode, str)
+            else "direct"
+        )
+        if self.meme_agent_mode not in {"direct", "emotion_agent", "emotion_only"}:
+            logger.warning(
+                f"[{PLUGIN_NAME}] meme_agent_mode 无效，已回退 direct 模式"
+            )
+            self.meme_agent_mode = "direct"
+        self.emotion_agent_settings = EmotionAgentSettings.safe(
+            provider_id=config.get("emotion_provider_id", ""),
+            max_steps=config.get("emotion_max_steps", 2),
+            timeout_seconds=config.get("emotion_timeout_seconds", 10.0),
+        )
+        self.emotion_tool = None
+        self.emotion_only_reviewer = None
+        if self.meme_agent_mode == "emotion_agent":
+            self.emotion_tool = EmotionDelegationTool.create(
+                self.meme_tool,
+                provider_id=self.emotion_agent_settings.provider_id,
+                max_steps=self.emotion_agent_settings.max_steps,
+                timeout_seconds=self.emotion_agent_settings.timeout_seconds,
+            )
+            if not self.emotion_agent_settings.provider_id:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] emotion_agent 模式尚未配置 emotion_provider_id；"
+                    "委托请求将安全跳过"
+                )
+            # In delegated mode the main conversation model must not see the
+            # private send_meme tool.  It only receives one low-effort signal
+            # tool; the emotion agent gets send_meme through its private ToolSet.
+            self.context.add_llm_tools(self.emotion_tool)
+        elif self.meme_agent_mode == "emotion_only":
+            # Automatic mode deliberately registers no LLM tool.  The
+            # on_llm_response hook below schedules a private reviewer after
+            # the conversation model has produced its reply.
+            self.emotion_only_reviewer = EmotionOnlyReviewer.create(
+                self.context,
+                self.meme_tool,
+                provider_id=self.emotion_agent_settings.provider_id,
+                max_steps=self.emotion_agent_settings.max_steps,
+                timeout_seconds=self.emotion_agent_settings.timeout_seconds,
+            )
+            if not self.emotion_agent_settings.provider_id:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] emotion_only 模式尚未配置 emotion_provider_id；"
+                    "自动审核将安全跳过"
+                )
+        else:
+            self.context.add_llm_tools(self.meme_tool)
 
         self._register_web_apis()
+
+    def _emotion_agent_ready(self) -> bool:
+        """Check configured provider existence and explicit tool-use support."""
+
+        if self.meme_agent_mode not in {"emotion_agent", "emotion_only"}:
+            return False
+        provider_id = self.emotion_agent_settings.provider_id
+        if not provider_id:
+            return False
+        try:
+            provider = self.context.get_provider_by_id(provider_id)
+            if provider is None:
+                return False
+            provider_config = getattr(provider, "provider_config", None)
+            modalities = (
+                provider_config.get("modalities")
+                if isinstance(provider_config, dict)
+                else None
+            )
+            if isinstance(modalities, list) and modalities:
+                return "tool_use" in modalities
+            return True
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 检查情绪 Agent Provider 失败: {exc}")
+            return False
+
+    @filter.on_llm_response()
+    async def _on_llm_response_for_emotion_only(self, event: AstrMessageEvent, resp):
+        """Review only the current exchange after the normal reply is ready."""
+
+        if self.meme_agent_mode != "emotion_only":
+            return
+        reviewer = self.emotion_only_reviewer
+        if reviewer is None:
+            return
+        user_text = getattr(event, "message_str", "")
+        if callable(user_text):
+            user_text = user_text()
+        if not isinstance(user_text, str) or not user_text.strip():
+            return
+        # Commands are handled by their command handlers, not by the emotion
+        # reviewer.  This also avoids surprising sends for administrative APIs.
+        if user_text.lstrip().startswith(("/", "!", "！")):
+            return
+        if getattr(resp, "role", "assistant") == "err":
+            return
+        assistant_text = getattr(resp, "completion_text", "")
+        if not isinstance(assistant_text, str) or not assistant_text.strip():
+            return
+        reviewer.schedule(
+            event,
+            user_text=user_text,
+            assistant_text=assistant_text,
+        )
 
     @filter.command_group("meme")
     def meme_commands():
@@ -786,6 +897,8 @@ class MemesPlugin(Star):
                 "mode": settings.mode,
                 "timeout_seconds": settings.timeout_seconds,
                 "retry_count": settings.retry_count,
+                "decision_mode": self.meme_agent_mode,
+                "emotion_agent_ready": self._emotion_agent_ready(),
                 "description": "image delivery pipeline",
             }
         )
@@ -942,7 +1055,27 @@ class MemesPlugin(Star):
         for p in self.context.get_all_embedding_providers():
             meta = p.meta()
             emb_providers.append({"id": meta.id, "type": meta.type, "dim": p.get_dim()})
+        emotion_providers = []
+        try:
+            for provider in self.context.get_all_providers():
+                meta = provider.meta()
+                provider_id = getattr(meta, "id", "")
+                if isinstance(provider_id, str) and provider_id:
+                    emotion_providers.append(
+                        {
+                            "id": provider_id,
+                            "type": getattr(meta, "type", "chat_completion"),
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(f"[{PLUGIN_NAME}] 获取情绪 Agent Provider 列表失败: {exc}")
         return json_response({
+            "meme_agent_mode": self.meme_agent_mode,
+            "emotion_provider_id": self.emotion_agent_settings.provider_id,
+            "emotion_max_steps": self.emotion_agent_settings.max_steps,
+            "emotion_timeout_seconds": self.emotion_agent_settings.timeout_seconds,
+            "emotion_agent_ready": self._emotion_agent_ready(),
+            "available_emotion_providers": emotion_providers,
             "match_mode": self.config.get("match_mode", "keyword"),
             "embedding_provider_id": self.config.get("embedding_provider_id", ""),
             "embedding_fallback": self.config.get("embedding_fallback", True),
@@ -1033,6 +1166,8 @@ class MemesPlugin(Star):
         return await self._thumbnails.get_thumbnail(img_id, img_path, size)
 
     async def terminate(self) -> None:
+        if self.emotion_only_reviewer is not None:
+            await self.emotion_only_reviewer.close()
         self.selector.clear()
         self.router.clear()
         self.policy.clear()

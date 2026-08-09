@@ -53,4 +53,31 @@ def send_meme_parameters() -> dict:
     }
 
 
-__all__ = ["send_meme_parameters"]
+def request_meme_review_parameters() -> dict:
+    """Return the intentionally tiny schema for delegated meme requests.
+
+    In delegated mode the conversation model only signals that a meme may be
+    useful.  A separate emotion agent receives only the current user message
+    and assistant draft when available, then privately calls ``send_meme`` when
+    it agrees.  Keeping this schema tiny avoids making the conversation model
+    reproduce emotion analysis.
+    """
+
+    return {
+        "type": "object",
+        "properties": {
+            "hint": {
+                "type": "string",
+                "maxLength": 256,
+                "description": (
+                    "可选的一句话提示；不要自行总结完整情绪，通常留空即可；"
+                    "仅在工具调用上下文没有助手草稿时作为兜底。"
+                ),
+            }
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+
+__all__ = ["request_meme_review_parameters", "send_meme_parameters"]

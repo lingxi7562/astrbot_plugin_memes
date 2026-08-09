@@ -1,8 +1,8 @@
 name: astrbot_plugin_memes
 display_name: 表情包库
-desc: LLM 自主调用发送表情包，复用智能图片对话标签库，支持 WebUI 预览与刷新
+desc: LLM 自主调用发送表情包，支持独立情绪 Agent 委托与回复后自动审核、复用智能图片对话标签库与 WebUI 管理
 author: lingxi
-version: 0.2.0
+version: 0.4.0
 repo: https://github.com/lingxi7562/astrbot_plugin_memes
 support_platforms:
   - aiocqhttp
@@ -22,5 +22,5 @@ support_platforms:
   - vocechat
   - weixin_official_account
   - weixin_oc
-short_desc: LLM 自主调用发送表情包，WebUI 预览刷新
+short_desc: 支持情绪 Agent 委托与自动审核的智能表情包发送
 astrbot_version: ">=4.26.0,<5"
