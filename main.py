@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
