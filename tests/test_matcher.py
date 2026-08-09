@@ -82,5 +82,42 @@ class MatcherSemanticTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({result["id"] for result in results}, {"cat", "laugh"})
 
 
+class MatcherPrimaryEmotionTests(unittest.TestCase):
+    def test_primary_tag_gets_more_keyword_weight_than_secondary_tag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index = MatcherIndex(root)
+            index.images = {
+                "sad": {
+                    "id": "sad",
+                    "filename": "sad.png",
+                    "rel_path": "sad.png",
+                    "tags": ["伤心"],
+                },
+                "helpless": {
+                    "id": "helpless",
+                    "filename": "helpless.png",
+                    "rel_path": "helpless.png",
+                    "tags": ["无奈"],
+                },
+            }
+            index.tag_to_ids = {"伤心": ["sad"], "无奈": ["helpless"]}
+            matcher = TagMatcher(index)
+
+            results = matcher.match(
+                ["虽然用户伤心但我无奈", "伤心", "无奈"],
+                limit=2,
+                primary_tags=["无奈"],
+            )
+
+            self.assertEqual(results[0]["id"], "helpless")
+
+    def test_prioritize_puts_primary_terms_first_for_embedding(self):
+        self.assertEqual(
+            TagMatcher._prioritize(["full intent", "secondary"], ["primary"]),
+            ["primary", "full intent", "secondary"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,19 @@ class QueryPlanTests(unittest.TestCase):
         self.assertEqual(plan.terms[0], "对方讲了冷笑话，我想无语吐槽")
         self.assertIn("冷笑", plan.terms)
         self.assertIn("无语", plan.terms)
+        self.assertEqual(plan.primary_terms[:2], ("无语",))
+        self.assertEqual(plan.focus_reason, "speaker")
         self.assertFalse(plan.used_context)
+
+    def test_contrast_tail_wins_when_both_clauses_mention_emotions(self):
+        plan = build_query_plan(
+            intent="虽然用户有些伤心，但我也很无奈",
+            known_tags=["伤心", "无奈"],
+        )
+        self.assertEqual(plan.primary_terms, ("无奈",))
+        self.assertEqual(plan.focus_reason, "contrast_tail")
+        self.assertIn("无奈", plan.focus)
+        self.assertNotIn("伤心", plan.primary_terms)
 
     def test_active_message_is_a_safe_fallback_when_arguments_are_omitted(self):
         plan = build_query_plan(

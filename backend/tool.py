@@ -214,15 +214,36 @@ class SendMemeTool(FunctionTool[AstrAgentContext]):
                 tags,
                 limit=limit,
                 min_score=min_score,
+                primary_tags=query_plan.primary_terms,
             )
             if not matches and do_fallback:
-                matches = matcher.match(tags, limit=limit, min_score=min_score)
+                matches = matcher.match(
+                    tags,
+                    limit=limit,
+                    min_score=min_score,
+                    primary_tags=query_plan.primary_terms,
+                )
         elif match_mode == "hybrid":
-            matches = await matcher.match_hybrid(tags, limit=limit, min_score=min_score)
+            matches = await matcher.match_hybrid(
+                tags,
+                limit=limit,
+                min_score=min_score,
+                primary_tags=query_plan.primary_terms,
+            )
             if not matches and do_fallback:
-                matches = matcher.match(tags, limit=limit, min_score=min_score)
+                matches = matcher.match(
+                    tags,
+                    limit=limit,
+                    min_score=min_score,
+                    primary_tags=query_plan.primary_terms,
+                )
         else:
-            matches = matcher.match(tags, limit=limit, min_score=min_score)
+            matches = matcher.match(
+                tags,
+                limit=limit,
+                min_score=min_score,
+                primary_tags=query_plan.primary_terms,
+            )
 
         if not matches:
             available = index.get_unique_tags()[:50]
