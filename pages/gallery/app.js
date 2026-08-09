@@ -294,8 +294,10 @@ importInput.addEventListener("change", async () => {
   const file = importInput.files && importInput.files[0];
   importInput.value = "";
   if (!file) return;
-  if (file.size > 10 * 1024 * 1024) {
-    updateStats("文件超过 10 MiB 限制");
+  const isArchive = /\\.zip$/i.test(file.name) || ["application/zip", "application/x-zip-compressed"].includes(file.type);
+  const maxBytes = isArchive ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+  if (file.size > maxBytes) {
+    updateStats(`文件超过 ${isArchive ? "50" : "10"} MiB 限制`);
     return;
   }
   try {
@@ -309,11 +311,12 @@ importInput.addEventListener("change", async () => {
     const encoded = separator >= 0 ? dataUrl.slice(separator + 1) : "";
     const entered = window.prompt("可选：输入标签，用逗号分隔", "");
     if (entered === null) return;
-    await bridge.apiPost("library/import", {
+    const payload = {
       filename: file.name,
-      data_b64: encoded,
       tags: entered.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 32),
-    });
+    };
+    payload[isArchive ? "archive_b64" : "data_b64"] = encoded;
+    await bridge.apiPost("library/import", payload);
     await load();
   } catch (err) {
     updateStats("导入失败");

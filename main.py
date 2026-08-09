@@ -925,20 +925,40 @@ class MemesPlugin(Star):
         if not isinstance(body, dict):
             return error_response("请求体必须是 JSON 对象", status_code=400)
         try:
-            result = self.catalog.import_base64(
-                body.get("filename"), body.get("data_b64"), body.get("tags", [])
-            )
+            if body.get("archive_b64") is not None:
+                result = self.catalog.import_archive_base64(
+                    body.get("filename"), body.get("archive_b64"), body.get("tags", [])
+                )
+            else:
+                result = self.catalog.import_base64(
+                    body.get("filename"), body.get("data_b64"), body.get("tags", [])
+                )
             report = self._load_index()
-            result["id"] = next(
-                (
-                    image_id
-                    for image_id, item in self.index.images.items()
-                    if isinstance(item, dict)
-                    and item.get("source") == "managed"
-                    and item.get("rel_path") == result["rel_path"]
-                ),
-                "",
-            )
+            if isinstance(result.get("files"), list):
+                for imported in result["files"]:
+                    if not isinstance(imported, dict):
+                        continue
+                    imported["id"] = next(
+                        (
+                            image_id
+                            for image_id, item in self.index.images.items()
+                            if isinstance(item, dict)
+                            and item.get("source") == "managed"
+                            and item.get("rel_path") == imported.get("rel_path")
+                        ),
+                        "",
+                    )
+            else:
+                result["id"] = next(
+                    (
+                        image_id
+                        for image_id, item in self.index.images.items()
+                        if isinstance(item, dict)
+                        and item.get("source") == "managed"
+                        and item.get("rel_path") == result["rel_path"]
+                    ),
+                    "",
+                )
             return json_response({"status": "ok", "item": result, "count": report.get("count", 0)})
         except CatalogError as exc:
             return error_response(str(exc), status_code=400)

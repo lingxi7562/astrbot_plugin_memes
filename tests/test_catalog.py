@@ -1,7 +1,10 @@
 import base64
+import io
 import json
+import stat
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from backend.catalog import CatalogError, ManagedCatalog
@@ -37,6 +40,14 @@ class FakeIndex:
 
 
 class CatalogTests(unittest.TestCase):
+    @staticmethod
+    def _archive(entries: dict[str, bytes]) -> str:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, content in entries.items():
+                archive.writestr(name, content)
+        return base64.b64encode(buffer.getvalue()).decode()
+
     def test_import_is_validated_and_metadata_is_applied_atomically(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "library"
@@ -52,6 +63,68 @@ class CatalogTests(unittest.TestCase):
 
             with self.assertRaises(CatalogError):
                 catalog.import_base64("evil.svg", base64.b64encode(b"<svg/>").decode())
+
+    def test_archive_import_strips_common_root_and_preserves_nested_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "library"
+            catalog = ManagedCatalog(root, Path(temporary) / "managed_metadata.json")
+            encoded = self._archive(
+                {
+                    "pack/one.png": PNG,
+                    "pack\\sub\\two.jpg": b"\xff\xd8\xffjpeg",
+                    "pack/readme.txt": b"ignored",
+                }
+            )
+            result = catalog.import_archive_base64("pack.zip", encoded, ["batch"])
+
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(result["stripped_root"], "pack")
+            paths = {item["rel_path"] for item in result["files"]}
+            self.assertEqual(paths, {"one.png", "sub/two.jpg"})
+            self.assertTrue((root / "one.png").is_file())
+            self.assertTrue((root / "sub/two.jpg").is_file())
+            self.assertEqual(set(catalog._overrides), paths)
+
+    def test_archive_import_rejects_traversal_and_bad_images_without_partial_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "library"
+            catalog = ManagedCatalog(root, Path(temporary) / "managed_metadata.json")
+            with self.assertRaises(CatalogError):
+                catalog.import_archive_base64(
+                    "unsafe.zip", self._archive({"../outside.png": PNG})
+                )
+            self.assertFalse((Path(temporary) / "outside.png").exists())
+
+            encoded = self._archive({"ok.png": PNG, "bad.png": b"not-an-image"})
+            with self.assertRaises(CatalogError):
+                catalog.import_archive_base64("bad.zip", encoded)
+            self.assertFalse(root.exists() and any(root.rglob("*")))
+
+    def test_archive_import_rejects_symlink_entries(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            info = zipfile.ZipInfo("pack/link.png")
+            info.create_system = 3
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(info, b"outside.png")
+        with tempfile.TemporaryDirectory() as temporary:
+            catalog = ManagedCatalog(
+                Path(temporary) / "library", Path(temporary) / "managed_metadata.json"
+            )
+            with self.assertRaises(CatalogError):
+                catalog.import_archive_base64(
+                    "symlink.zip", base64.b64encode(buffer.getvalue()).decode()
+                )
+
+    def test_archive_import_renames_collisions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "library"
+            catalog = ManagedCatalog(root, Path(temporary) / "managed_metadata.json")
+            encoded = self._archive({"pack/one.png": PNG})
+            first = catalog.import_archive_base64("pack.zip", encoded)
+            second = catalog.import_archive_base64("pack.zip", encoded)
+            self.assertNotEqual(first["files"][0]["rel_path"], second["files"][0]["rel_path"])
+            self.assertEqual(len(list(root.glob("*.png"))), 2)
 
     def test_tags_are_bounded_and_external_items_are_not_editable(self):
         with tempfile.TemporaryDirectory() as temporary:

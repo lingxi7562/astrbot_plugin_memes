@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import json
 import os
+import stat
 import tempfile
 import uuid
+import zipfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from threading import RLock
@@ -20,6 +23,11 @@ class CatalogError(ValueError):
 
 class ManagedCatalog:
     MAX_IMPORT_BYTES = 10 * 1024 * 1024
+    MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+    MAX_ARCHIVE_ENTRIES = 512
+    MAX_ARCHIVE_FILES = 256
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+    MAX_ARCHIVE_PATH_LENGTH = 512
     MAX_TAGS = 32
     MAX_TAG_LENGTH = 128
     MAX_METADATA_BYTES = 4 * 1024 * 1024
@@ -224,6 +232,253 @@ class ManagedCatalog:
                     os.unlink(temporary)
                 except OSError:
                     pass
+
+    def import_archive_base64(
+        self, filename: Any, encoded: Any, tags: Any = ()
+    ) -> dict[str, Any]:
+        """Import supported images from a ZIP archive into the managed library.
+
+        Archive paths are normalised to portable POSIX paths.  When every image
+        is below the same top-level directory (the common layout produced by
+        most pack tools), that directory is removed so the resulting managed
+        paths remain stable and useful as tags.  Existing files are never
+        overwritten; a short unique suffix is added on collision.
+        """
+
+        if not isinstance(filename, str) or not filename.strip() or len(filename) > 256:
+            raise CatalogError("压缩包文件名无效")
+        archive_name = Path(filename.strip()).name
+        if archive_name != filename.strip() or Path(archive_name).suffix.casefold() != ".zip":
+            raise CatalogError("只支持 ZIP 压缩包")
+        if not isinstance(encoded, str) or len(encoded) > (self.MAX_ARCHIVE_BYTES * 4 // 3) + 8:
+            raise CatalogError("压缩包内容过大")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise CatalogError("archive_b64 不是有效的 Base64") from exc
+        if not content or len(content) > self.MAX_ARCHIVE_BYTES:
+            raise CatalogError("压缩包大小超出限制")
+        parsed_tags = self._tags(tags)
+
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(content))
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise CatalogError("压缩包无效或已损坏") from exc
+
+        created: list[Path] = []
+        temporary: str | None = None
+        try:
+            infos = archive.infolist()
+            if len(infos) > self.MAX_ARCHIVE_ENTRIES:
+                raise CatalogError("压缩包条目数量超出限制")
+            image_entries: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
+            total_size = 0
+            for info in infos:
+                member_path = self._archive_member_path(info.filename)
+                if info.flag_bits & 0x1:
+                    raise CatalogError("不支持加密压缩包")
+                mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(mode):
+                    raise CatalogError("压缩包包含不安全的符号链接")
+                if info.is_dir() or info.filename.replace("\\", "/").endswith("/"):
+                    continue
+                if info.file_size < 0 or info.file_size > self.MAX_IMPORT_BYTES:
+                    raise CatalogError("压缩包内单个文件过大")
+                total_size += info.file_size
+                if total_size > self.MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                    raise CatalogError("压缩包解压后总大小超出限制")
+                extension = Path(member_path.name).suffix.casefold()
+                if extension not in self.ALLOWED_EXTENSIONS:
+                    continue
+                if "__macosx" in {part.casefold() for part in member_path.parts}:
+                    continue
+                image_entries.append((info, member_path))
+                if len(image_entries) > self.MAX_ARCHIVE_FILES:
+                    raise CatalogError("压缩包内图片数量超出限制")
+
+            if not image_entries:
+                raise CatalogError("压缩包内没有受支持的图片")
+            common_root = self._common_archive_root(
+                [member_path for _, member_path in image_entries]
+            )
+
+            with self._lock:
+                if parsed_tags and len(self._overrides) + len(image_entries) > self.MAX_METADATA_ENTRIES:
+                    raise CatalogError("元数据条目已达到上限")
+                self.root.mkdir(parents=True, exist_ok=True)
+                canonical_root = self.root.resolve(strict=False)
+                reserved: set[str] = set()
+                imported: list[dict[str, Any]] = []
+                actual_total = 0
+                for info, member_path in image_entries:
+                    relative = (
+                        member_path.relative_to(common_root)
+                        if common_root is not None
+                        else member_path
+                    )
+                    rel_path = self._unique_archive_path(
+                        relative.as_posix(), reserved, canonical_root
+                    )
+                    destination = self._safe_destination(rel_path, canonical_root)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    parent = destination.parent.resolve(strict=False)
+                    if not self._is_within_path(parent, canonical_root):
+                        raise CatalogError("压缩包路径超出 managed 目录")
+
+                    fd, temporary = tempfile.mkstemp(
+                        prefix=".archive-",
+                        suffix=Path(rel_path).suffix.casefold(),
+                        dir=self.root,
+                    )
+                    written = 0
+                    try:
+                        with os.fdopen(fd, "wb") as handle, archive.open(info, "r") as source:
+                            prefix = b""
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                if not prefix:
+                                    prefix = chunk[:64]
+                                written += len(chunk)
+                                actual_total += len(chunk)
+                                if written > self.MAX_IMPORT_BYTES:
+                                    raise CatalogError("压缩包内单个文件过大")
+                                if actual_total > self.MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                                    raise CatalogError("压缩包解压后总大小超出限制")
+                                handle.write(chunk)
+                            if not self._looks_like_image(
+                                Path(rel_path).suffix.casefold(), prefix
+                            ):
+                                raise CatalogError("压缩包内存在内容与扩展名不匹配的图片")
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        os.replace(temporary, destination)
+                        temporary = None
+                    finally:
+                        if temporary:
+                            try:
+                                os.unlink(temporary)
+                            except OSError:
+                                pass
+
+                    created.append(destination)
+                    reserved.add(rel_path)
+                    imported.append(
+                        {
+                            "filename": destination.name,
+                            "rel_path": rel_path,
+                            "archive_path": member_path.as_posix(),
+                            "bytes": written,
+                        }
+                    )
+
+                if parsed_tags:
+                    previous = dict(self._overrides)
+                    try:
+                        for item in imported:
+                            self._overrides[item["rel_path"]] = list(parsed_tags)
+                        self._persist_locked()
+                    except (OSError, TypeError, ValueError) as exc:
+                        self._overrides = previous
+                        raise CatalogError("保存导入元数据失败") from exc
+
+            return {
+                "filename": archive_name,
+                "files": imported,
+                "count": len(imported),
+                "bytes": sum(item["bytes"] for item in imported),
+                "stripped_root": common_root.as_posix() if common_root else "",
+            }
+        except CatalogError:
+            for path in reversed(created):
+                try:
+                    if path.is_file() and not path.is_symlink():
+                        path.unlink()
+                except OSError:
+                    pass
+            raise
+        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            for path in reversed(created):
+                try:
+                    if path.is_file() and not path.is_symlink():
+                        path.unlink()
+                except OSError:
+                    pass
+            raise CatalogError("解压压缩包失败") from exc
+        finally:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+            try:
+                archive.close()
+            except OSError:
+                pass
+
+    @classmethod
+    def _archive_member_path(cls, value: Any) -> PurePosixPath:
+        if (
+            not isinstance(value, str)
+            or not value
+            or "\x00" in value
+            or len(value) > cls.MAX_ARCHIVE_PATH_LENGTH
+        ):
+            raise CatalogError("压缩包内路径无效")
+        raw = value.replace("\\", "/")
+        windows = PurePosixPath(raw)
+        if (
+            windows.is_absolute()
+            or not windows.parts
+            or any(part in {"", ".", ".."} for part in windows.parts)
+            or PurePosixPath(raw).drive
+            or any(":" in part for part in windows.parts)
+        ):
+            raise CatalogError("压缩包内路径不安全")
+        return windows
+
+    @staticmethod
+    def _common_archive_root(paths: list[PurePosixPath]) -> PurePosixPath | None:
+        if not paths or any(len(path.parts) < 2 for path in paths):
+            return None
+        first = paths[0].parts[0]
+        if not first or any(path.parts[0] != first for path in paths):
+            return None
+        return PurePosixPath(first)
+
+    def _unique_archive_path(
+        self, value: str, reserved: set[str], canonical_root: Path
+    ) -> str:
+        base = self._relative_key(value)
+        candidate = base
+        path = PurePosixPath(base)
+        for _ in range(1000):
+            candidate_path = self._safe_destination(candidate, canonical_root)
+            if candidate not in reserved and not (
+                candidate_path.exists() or candidate_path.is_symlink()
+            ):
+                return candidate
+            stem = path.stem or "image"
+            suffix = path.suffix
+            name = f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"
+            candidate = (path.parent / name).as_posix()
+        raise CatalogError("无法为导入图片分配安全路径")
+
+    def _safe_destination(self, rel_path: str, canonical_root: Path) -> Path:
+        destination = canonical_root.joinpath(*PurePosixPath(rel_path).parts)
+        parent = destination.parent.resolve(strict=False)
+        if not self._is_within_path(parent, canonical_root):
+            raise CatalogError("目标路径超出 managed 目录")
+        return destination
+
+    @staticmethod
+    def _is_within_path(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
 
     @staticmethod
     def _looks_like_image(extension: str, content: bytes) -> bool:
